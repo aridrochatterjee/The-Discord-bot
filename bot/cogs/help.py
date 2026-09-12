@@ -81,6 +81,11 @@ class HelpSelect(discord.ui.Select):
                 inline=False,
             )
             embed.add_field(
+                name="/npm <package>",
+                value="Lookup Node.js / JavaScript package metadata, weekly downloads, and dependencies on npm.",
+                inline=False,
+            )
+            embed.add_field(
                 name="/cheat <query>",
                 value="Quick cheat sheet notes for CLI commands or programming topics (e.g. `/cheat git cherry-pick`).",
                 inline=False,
@@ -157,8 +162,8 @@ class HelpSelect(discord.ui.Select):
 
         else:  # community
             embed = discord.Embed(
-                title="🌟 Community & Karma (Horizon Devs)",
-                description="Community engagement, project discovery, and developer recognition.",
+                title="🌟 Community, Karma, Challenges & Bounties",
+                description="Community engagement, hackathons, coding bounties, and developer recognition.",
                 color=discord.Color.gold(),
             )
             embed.add_field(
@@ -167,13 +172,18 @@ class HelpSelect(discord.ui.Select):
                 inline=False,
             )
             embed.add_field(
-                name="/techroles",
-                value="Post the self-assignable tech stack roles panel (Frontend, Backend, Mobile, DevOps, AI, Python, etc.).",
+                name="/challenge post / list / award / end",
+                value="Daily developer challenges (Owner/Admin post) with auto-threads, difficulty tiers, and Karma awards.",
+                inline=False,
+            )
+            embed.add_field(
+                name="/bounty create / list / accept / cancel",
+                value="Post coding bounties staking Dev Karma as reward escrow, or solve bounties to earn points.",
                 inline=False,
             )
             embed.add_field(
                 name="/thank <member> [reason]",
-                value="Award Dev Karma to a fellow developer who assisted you with code or debugging.",
+                value="Award Dev Karma to a fellow developer who assisted you with code or debugging (limit: once per day per user).",
                 inline=False,
             )
             embed.add_field(
@@ -186,6 +196,7 @@ class HelpSelect(discord.ui.Select):
                 value="View the top 10 most helpful developers and contributors in the server.",
                 inline=False,
             )
+
 
         embed.set_footer(text="Horizon Devs Bot • Use the dropdown below to switch categories")
         return embed

@@ -25,3 +25,58 @@ async def test_reputation_self_thank_prevented():
     assert success is False
     assert "yourself" in message.lower()
     assert points == 0
+
+
+def test_check_thank_cooldown_active():
+    from datetime import datetime, timedelta, timezone
+    from bot.database.queries import check_thank_cooldown
+
+    now = datetime(2026, 9, 12, 12, 0, 0, tzinfo=timezone.utc)
+    
+    # 2 hours ago -> ~22 hours left
+    last_thanked = now - timedelta(hours=2)
+    on_cd, hours, minutes = check_thank_cooldown(last_thanked, now=now)
+    assert on_cd is True
+    assert hours == 22
+    assert minutes == 0
+
+    # 23 hours and 30 minutes ago -> 30 minutes left
+    last_thanked = now - timedelta(hours=23, minutes=30)
+    on_cd, hours, minutes = check_thank_cooldown(last_thanked, now=now)
+    assert on_cd is True
+    assert hours == 0
+    assert minutes == 30
+
+
+def test_check_thank_cooldown_expired():
+    from datetime import datetime, timedelta, timezone
+    from bot.database.queries import check_thank_cooldown
+
+    now = datetime(2026, 9, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+    # 24 hours and 1 minute ago -> expired
+    last_thanked = now - timedelta(hours=24, minutes=1)
+    on_cd, hours, minutes = check_thank_cooldown(last_thanked, now=now)
+    assert on_cd is False
+    assert hours == 0
+    assert minutes == 0
+
+    # Exactly 24 hours ago -> expired
+    last_thanked = now - timedelta(hours=24)
+    on_cd, hours, minutes = check_thank_cooldown(last_thanked, now=now)
+    assert on_cd is False
+    assert hours == 0
+    assert minutes == 0
+
+
+def test_check_thank_cooldown_naive_datetime():
+    from datetime import datetime, timedelta
+    from bot.database.queries import check_thank_cooldown
+
+    # Should handle naive datetime without throwing TypeError
+    now = datetime(2026, 9, 12, 12, 0, 0)
+    last_thanked = now - timedelta(hours=5)
+    on_cd, hours, minutes = check_thank_cooldown(last_thanked, now=now)
+    assert on_cd is True
+    assert hours == 19
+

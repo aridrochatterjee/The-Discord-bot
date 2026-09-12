@@ -26,86 +26,6 @@ def normalize_url(url: str) -> Optional[str]:
 
 
 # =============================================================================
-# TECH STACK ROLE DEFINITIONS
-# =============================================================================
-
-TECH_ROLES = [
-    ("🎨 Frontend", "Frontend Developer", discord.ButtonStyle.primary),
-    ("⚙️ Backend", "Backend Developer", discord.ButtonStyle.primary),
-    ("📱 Mobile", "Mobile Developer", discord.ButtonStyle.primary),
-    ("☁️ DevOps", "DevOps & Cloud", discord.ButtonStyle.primary),
-    ("🤖 AI / ML", "AI & Machine Learning", discord.ButtonStyle.secondary),
-    ("🐍 Python", "Pythonista", discord.ButtonStyle.secondary),
-    ("⚡ TypeScript", "TypeScript & JS", discord.ButtonStyle.secondary),
-    ("🦀 Rust", "Rustacean", discord.ButtonStyle.secondary),
-]
-
-
-class TechRolesView(discord.ui.View):
-    """Persistent view with buttons for toggling developer roles."""
-
-    def __init__(self) -> None:
-        super().__init__(timeout=None)
-        for label, role_name, style in TECH_ROLES:
-            custom_id = f"techrole:{role_name.lower().replace(' ', '_')}"
-            button = discord.ui.Button(
-                label=label,
-                style=style,
-                custom_id=custom_id,
-            )
-            button.callback = self._create_toggle_callback(role_name)
-            self.add_item(button)
-
-    def _create_toggle_callback(self, role_name: str):
-        async def callback(interaction: discord.Interaction) -> None:
-            if not interaction.guild or not isinstance(interaction.user, discord.Member):
-                return
-
-            guild = interaction.guild
-            member = interaction.user
-
-            # Check bot permissions
-            if not guild.me.guild_permissions.manage_roles:
-                await interaction.response.send_message(
-                    "❌ I don't have permission to manage roles in this server.",
-                    ephemeral=True,
-                )
-                return
-
-            # Find or auto-create role
-            role = discord.utils.get(guild.roles, name=role_name)
-            if role is None:
-                try:
-                    role = await guild.create_role(
-                        name=role_name,
-                        mentionable=True,
-                        reason="Auto-created by Horizon Devs Tech Roles panel",
-                    )
-                except discord.Forbidden:
-                    await interaction.response.send_message(
-                        f"❌ Could not create role `{role_name}` (insufficient permissions).",
-                        ephemeral=True,
-                    )
-                    return
-
-            # Toggle role
-            if role in member.roles:
-                await member.remove_roles(role, reason="Self-removed via Tech Roles panel")
-                await interaction.response.send_message(
-                    f"➖ Removed **{role.name}** role from your profile.",
-                    ephemeral=True,
-                )
-            else:
-                await member.add_roles(role, reason="Self-assigned via Tech Roles panel")
-                await interaction.response.send_message(
-                    f"➕ Assigned **{role.name}** role to your profile!",
-                    ephemeral=True,
-                )
-
-        return callback
-
-
-# =============================================================================
 # SHOWCASE MODAL & PERSISTENT VIEW
 # =============================================================================
 
@@ -317,37 +237,6 @@ class Community(commands.Cog, name="Community"):
                 color=discord.Color.blurple(),
             )
             await ctx.send(embed=embed)
-
-    # =========================================================================
-    # TECH ROLES PANEL (/techroles)
-    # =========================================================================
-
-    @commands.hybrid_command(
-        name="techroles",
-        description="Post the self-assignable tech stack roles panel (Admins/Mods).",
-    )
-    @commands.has_permissions(manage_roles=True)
-    @commands.guild_only()
-    async def techroles(self, ctx: commands.Context) -> None:
-        """Post an interactive tech stack role selection board."""
-        embed = discord.Embed(
-            title="🏷️ Horizon Devs — Choose Your Tech Roles",
-            description=(
-                "Click the buttons below to toggle your development specializations!\n\n"
-                "• **Frontend** (React, Vue, Web)\n"
-                "• **Backend** (APIs, Microservices, Databases)\n"
-                "• **Mobile** (iOS, Android, React Native, Flutter)\n"
-                "• **DevOps & Cloud** (Docker, K8s, AWS, CI/CD)\n"
-                "• **AI / Machine Learning** (LLMs, PyTorch, Data Science)\n"
-                "• **Python** • **TypeScript / JS** • **Rust**\n\n"
-                "*Clicking a button adds or removes the role immediately.*"
-            ),
-            color=discord.Color.blurple(),
-        )
-        embed.set_footer(text="Horizon Devs Self-Assignable Roles")
-
-        view = TechRolesView()
-        await ctx.send(embed=embed, view=view)
 
     # =========================================================================
     # PERSISTENT COMPONENT LISTENER

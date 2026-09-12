@@ -49,3 +49,18 @@ def has_any_role(*role_names: str) -> Callable[[T], T]:
         raise commands.CheckFailure(f"You require one of these roles: {', '.join(role_names)}")
 
     return commands.check(predicate)
+
+
+def is_admin_or_owner() -> Callable[[T], T]:
+    """Check if the command invoker has administrator permissions or is the server owner."""
+
+    async def predicate(ctx: commands.Context) -> bool:
+        if ctx.guild is None:
+            raise commands.NoPrivateMessage("This command can only be used in a server.")
+        if ctx.author.id == ctx.guild.owner_id:
+            return True
+        if isinstance(ctx.author, discord.Member) and ctx.author.guild_permissions.administrator:
+            return True
+        raise commands.CheckFailure("Only the server owner or administrators can use this command.")
+
+    return commands.check(predicate)

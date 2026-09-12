@@ -55,7 +55,7 @@ class Reputation(commands.Cog, name="Reputation"):
 
     @commands.hybrid_command(
         name="thank",
-        description="Award Dev Karma to a member who helped you with code or advice.",
+        description="Award Dev Karma to a member who helped you (limit: once per day per user).",
     )
     @commands.guild_only()
     async def thank(
@@ -65,7 +65,7 @@ class Reputation(commands.Cog, name="Reputation"):
         *,
         reason: str = "Helping a fellow developer",
     ) -> None:
-        """Award 1 reputation point to a helpful server member."""
+        """Award 1 reputation point to a helpful server member (limit: once per day per user)."""
         if ctx.guild is None:
             return
 

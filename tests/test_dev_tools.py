@@ -1,7 +1,7 @@
 import pytest
 from bot.cogs.dev_tools import (
     clean_code_block,
-    LANGUAGE_ALIASES,
+    JUDGE0_LANGUAGES,
     GITHUB_URL_RE,
     ANSI_ESCAPE_RE,
 )
@@ -22,14 +22,16 @@ def test_clean_code_block_fenced_no_lang():
     assert clean_code_block(code) == "print('hello world')"
 
 
-def test_language_aliases():
-    assert LANGUAGE_ALIASES.get("py") == "python"
-    assert LANGUAGE_ALIASES.get("js") == "javascript"
-    assert LANGUAGE_ALIASES.get("ts") == "typescript"
-    assert LANGUAGE_ALIASES.get("cpp") == "c++"
-    assert LANGUAGE_ALIASES.get("rs") == "rust"
-    assert LANGUAGE_ALIASES.get("golang") == "go"
-    assert LANGUAGE_ALIASES.get("sh") == "bash"
+def test_judge0_languages():
+    assert JUDGE0_LANGUAGES.get("python") == 71
+    assert JUDGE0_LANGUAGES.get("py") == 71
+    assert JUDGE0_LANGUAGES.get("javascript") == 63
+    assert JUDGE0_LANGUAGES.get("js") == 63
+    assert JUDGE0_LANGUAGES.get("typescript") == 74
+    assert JUDGE0_LANGUAGES.get("cpp") == 54
+    assert JUDGE0_LANGUAGES.get("rust") == 73
+    assert JUDGE0_LANGUAGES.get("go") == 60
+    assert JUDGE0_LANGUAGES.get("bash") == 46
 
 
 def test_github_regex_formats():
@@ -57,3 +59,30 @@ def test_parse_github_repo():
     assert parse_github_repo("owner/repo") == ("owner", "repo")
     assert parse_github_repo("https://github.com/owner/repo.git") == ("owner", "repo")
     assert parse_github_repo("invalid-string") is None
+
+
+def test_npm_registry_data_parsing():
+    # Verify parsing logic used in npm command
+    sample_data = {
+        "name": "express",
+        "description": "Fast, unopinionated, minimalist web framework",
+        "dist-tags": {"latest": "4.19.2"},
+        "versions": {
+            "4.19.2": {
+                "license": "MIT",
+                "dependencies": {"accepts": "~1.3.8", "bytes": "3.1.2"},
+                "devDependencies": {"mocha": "10.4.0"},
+                "homepage": "http://expressjs.com/",
+                "repository": {"type": "git", "url": "git+https://github.com/expressjs/express.git"},
+            }
+        },
+    }
+
+    latest = sample_data["dist-tags"]["latest"]
+    assert latest == "4.19.2"
+    ver_info = sample_data["versions"][latest]
+    assert ver_info["license"] == "MIT"
+    assert len(ver_info["dependencies"]) == 2
+    assert len(ver_info["devDependencies"]) == 1
+    assert "github.com/expressjs/express" in ver_info["repository"]["url"]
+

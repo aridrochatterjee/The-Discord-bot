@@ -5,8 +5,12 @@ import discord
 from discord.ext import commands
 
 from bot.config import TOKEN
+from bot.cogs.community import ShowcaseView
+from bot.cogs.challenge import ChallengeView
+from bot.cogs.bounty import BountyView
 from bot.database.client import init_supabase
 from bot.utils.http import close_session, get_session
+
 
 
 logging.basicConfig(
@@ -48,12 +52,15 @@ class DiscordBot(commands.Bot):
         await self.load_extension("bot.cogs.dev_tools")
         await self.load_extension("bot.cogs.community")
         await self.load_extension("bot.cogs.reputation")
+        await self.load_extension("bot.cogs.challenge")
+        await self.load_extension("bot.cogs.bounty")
         await self.load_extension("bot.cogs.help")
         await self.load_extension("bot.utils.status")
 
-        # 4. Register persistent views
-        from bot.cogs.community import TechRolesView
-        self.add_view(TechRolesView())
+        # 4. Register persistent UI views
+        self.add_view(ShowcaseView())
+        self.add_view(ChallengeView())
+        self.add_view(BountyView())
 
         # 5. Sync slash command tree
         await self.tree.sync()
@@ -73,15 +80,19 @@ class DiscordBot(commands.Bot):
         if isinstance(error, commands.CommandNotFound):
             return
 
-        if isinstance(error, commands.MissingPermissions):
-            perms = ", ".join(error.missing_permissions)
+        if isinstance(error, (commands.CheckFailure, commands.MissingPermissions)):
+            msg = str(error)
+            if isinstance(error, commands.MissingPermissions):
+                perms = ", ".join(error.missing_permissions)
+                msg = f"You need the following permission(s): `{perms}`"
             embed = discord.Embed(
                 title="❌ Permission Denied",
-                description=f"You need the following permission(s): `{perms}`",
+                description=msg,
                 color=discord.Color.red(),
             )
             await ctx.send(embed=embed)
             return
+
 
         if isinstance(error, commands.BotMissingPermissions):
             perms = ", ".join(error.missing_permissions)

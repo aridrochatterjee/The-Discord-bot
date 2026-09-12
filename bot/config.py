@@ -18,6 +18,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_ANON_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Piston Code Execution API (Default or Self-Hosted)
+# Judge0 CE Code Execution API (RapidAPI or Self-Hosted)
+JUDGE0_URL = os.getenv("JUDGE0_URL", "https://judge0-ce.p.rapidapi.com")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY") or os.getenv("JUDGE0_KEY")
+
+# Legacy/Alternative: Piston
 PISTON_URL = os.getenv("PISTON_URL", "https://emkc.org/api/v2/piston")
 PISTON_API_KEY = os.getenv("PISTON_API_KEY")
