@@ -16,16 +16,19 @@ class General(commands.Cog):
 
     @commands.hybrid_command(
         name="ping",
-        description="Check the bot's latency.",
+        description="Check if the bot is alive.",
     )
     async def ping(self, ctx: commands.Context) -> None:
-        """Show the bot's current latency."""
+        """Check the bot's latency."""
 
         latency = round(self.bot.latency * 1000)
 
         embed = discord.Embed(
-            title="Pong",
-            description=f"Latency: **{latency}ms**",
+            title="Pong!",
+            description=(
+                f"{ctx.author.mention}, **{latency}ms**\n"
+                "Stop pinging me, I'm alive 😭"
+            ),
             color=discord.Color.blurple(),
         )
 
@@ -72,12 +75,6 @@ class General(commands.Cog):
         )
 
         embed.add_field(
-            name="Server ID",
-            value=f"`{guild.id}`",
-            inline=True,
-        )
-
-        embed.add_field(
             name="Channels",
             value=str(len(guild.channels)),
             inline=True,
@@ -90,12 +87,23 @@ class General(commands.Cog):
         )
 
         embed.add_field(
+            name="Server ID",
+            value=f"`{guild.id}`",
+            inline=True,
+        )
+
+        embed.add_field(
             name="Created",
             value=discord.utils.format_dt(
                 guild.created_at,
                 style="F",
             ),
             inline=False,
+        )
+
+        embed.set_footer(
+            text=f"Requested by {ctx.author}",
+            icon_url=ctx.author.display_avatar.url,
         )
 
         await ctx.send(embed=embed)
@@ -116,16 +124,28 @@ class General(commands.Cog):
     ) -> None:
         """Display useful information about a server member."""
 
-        member = member or ctx.author
+        if member is None:
+            member = ctx.author
 
-        embed = discord.Embed(
-            title=str(member),
-            color=member.color
+        # Safety check for type checking and DM usage.
+        if not isinstance(member, discord.Member):
+            return
+
+        color = (
+            member.color
             if member.color != discord.Color.default()
-            else discord.Color.blurple(),
+            else discord.Color.blurple()
         )
 
-        embed.set_thumbnail(url=member.display_avatar.url)
+        embed = discord.Embed(
+            title=member.display_name,
+            description=member.mention,
+            color=color,
+        )
+
+        embed.set_thumbnail(
+            url=member.display_avatar.url,
+        )
 
         embed.add_field(
             name="User ID",
@@ -134,14 +154,28 @@ class General(commands.Cog):
         )
 
         embed.add_field(
-            name="Joined Server",
-            value=discord.utils.format_dt(
-                member.joined_at,
-                style="F",
-            )
-            if member.joined_at
-            else "Unknown",
+            name="Display Name",
+            value=member.display_name,
             inline=True,
+        )
+
+        embed.add_field(
+            name="Bot",
+            value="Yes" if member.bot else "No",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Joined Server",
+            value=(
+                discord.utils.format_dt(
+                    member.joined_at,
+                    style="F",
+                )
+                if member.joined_at
+                else "Unknown"
+            ),
+            inline=False,
         )
 
         embed.add_field(
@@ -150,7 +184,7 @@ class General(commands.Cog):
                 member.created_at,
                 style="F",
             ),
-            inline=True,
+            inline=False,
         )
 
         roles = [
