@@ -25,3 +25,4 @@ RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY") or os.getenv("JUDGE0_KEY")
 # Legacy/Alternative: Piston
 PISTON_URL = os.getenv("PISTON_URL", "https://emkc.org/api/v2/piston")
 PISTON_API_KEY = os.getenv("PISTON_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
