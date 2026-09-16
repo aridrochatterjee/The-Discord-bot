@@ -1,507 +1,1196 @@
+"""
+Developer Tools Cog
+-------------------
+
+Useful developer-focused commands for Horizon Devs.
+
+Commands:
+    /github          - Look up a GitHub repository
+    /github-user     - Look up a GitHub user
+    /github-commits  - Show recent commits from a repository
+    /pypi            - Look up a Python package
+    /npm             - Look up an npm package
+    /cheat           - Search cheat.sh
+    /json            - Validate and format JSON
+    /diff            - Compare two pieces of text
+    /regex           - Test a regular expression
+
+No code execution is performed by this cog.
+"""
+
 from __future__ import annotations
 
+import difflib
+import json
+import logging
 import re
-from typing import Any, Dict, Optional
+from datetime import datetime
+from urllib.parse import quote, urlparse
 
 import discord
+from discord import app_commands
 from discord.ext import commands
 
-from bot.config import JUDGE0_URL, RAPIDAPI_KEY
 from bot.utils.http import get_session
 
-
-# Judge0 CE Language IDs (Official CE specification)
-JUDGE0_LANGUAGES: Dict[str, int] = {
-    "python": 71,       # Python (3.8.1)
-    "py": 71,
-    "python3": 71,
-    "javascript": 63,   # JavaScript (Node.js 12.14.0)
-    "js": 63,
-    "node": 63,
-    "nodejs": 63,
-    "typescript": 74,   # TypeScript (3.7.4)
-    "ts": 74,
-    "c": 50,            # C (GCC 9.2.0)
-    "c++": 54,          # C++ (GCC 9.2.0)
-    "cpp": 54,
-    "csharp": 51,       # C# (Mono 6.6.0.161)
-    "cs": 51,
-    "c#": 51,
-    "java": 62,         # Java (OpenJDK 13.0.1)
-    "rust": 73,         # Rust (1.40.0)
-    "rs": 73,
-    "go": 60,           # Go (1.13.5)
-    "golang": 60,
-    "bash": 46,         # Bash (5.0.0)
-    "sh": 46,
-    "shell": 46,
-    "ruby": 72,         # Ruby (2.7.0)
-    "rb": 72,
-    "php": 68,          # PHP (7.4.1)
-}
-
-GITHUB_URL_RE = re.compile(
-    r"(?:https?://github\.com/)?([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)"
-)
-
-# Strips ANSI escape sequences from terminal outputs
-ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+logger = logging.getLogger(__name__)
 
 
-def clean_code_block(code: str) -> str:
-    """Strip markdown code fence syntax if user wrapped their snippet in ```."""
-    stripped = code.strip()
-    if stripped.startswith("```") and stripped.endswith("```"):
-        lines = stripped.splitlines()
-        # Remove opening ```lang and closing ```
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+GITHUB_API = "https://api.github.com"
+
+MAX_JSON_INPUT = 6000
+MAX_REGEX_PATTERN = 500
+MAX_REGEX_TEXT = 4000
+MAX_DIFF_INPUT = 5000
+
+CHEAT_MAX_OUTPUT = 3500
+GITHUB_COMMITS_PER_PAGE = 5
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def clean_code_block(text: str) -> str:
+    """
+    Remove Markdown code fences from user input.
+
+    Example:
+        ```json
+        {"hello": "world"}
+        ```
+
+    becomes:
+        {"hello": "world"}
+    """
+    text = text.strip()
+
+    if text.startswith("```") and text.endswith("```"):
+        lines = text.splitlines()
+
         if len(lines) >= 2:
-            return "\n".join(lines[1:-1]).strip()
-    return stripped
+            lines = lines[1:-1]
+            return "\n".join(lines).strip()
+
+    return text
 
 
-def parse_github_repo(input_str: str) -> Optional[tuple[str, str]]:
-    """Parse owner and repo name from string, stripping URLs, spaces, and .git suffix."""
-    match = GITHUB_URL_RE.search(input_str.strip())
-    if not match:
+def truncate(text: str, limit: int = 3500) -> str:
+    """Keep Discord output within a reasonable size."""
+    if len(text) <= limit:
+        return text
+
+    return text[: limit - 30] + "\n... output truncated"
+
+
+def format_number(value: int | None) -> str:
+    """Format large numbers nicely."""
+    if value is None:
+        return "Unknown"
+
+    return f"{value:,}"
+
+
+def format_date(value: str | None) -> str:
+    """Convert an ISO timestamp to a Discord timestamp."""
+    if not value:
+        return "Unknown"
+
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return f"<t:{int(dt.timestamp())}:R>"
+    except ValueError:
+        return value
+
+
+def github_headers() -> dict[str, str]:
+    """Headers shared by GitHub API requests."""
+    return {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "Horizon-Devs-Bot",
+    }
+
+
+def parse_github_repo(value: str) -> tuple[str, str] | None:
+    """
+    Parse common GitHub repository formats.
+
+    Supported:
+        owner/repo
+        github.com/owner/repo
+        https://github.com/owner/repo
+        https://github.com/owner/repo.git
+    """
+    value = value.strip()
+
+    if not value:
         return None
-    owner = match.group(1)
-    repo = match.group(2)
-    if repo.endswith(".git"):
-        repo = repo[:-4]
+
+    # Plain owner/repo
+    plain_match = re.fullmatch(
+        r"([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)",
+        value.rstrip("/"),
+    )
+
+    if plain_match:
+        owner, repo = plain_match.groups()
+        return owner, repo.removesuffix(".git")
+
+    # URL format
+    if not re.match(r"^https?://", value, re.IGNORECASE):
+        value = f"https://{value}"
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+
+    if parsed.netloc.lower() not in {
+        "github.com",
+        "www.github.com",
+    }:
+        return None
+
+    parts = [
+        part
+        for part in parsed.path.strip("/").split("/")
+        if part
+    ]
+
+    if len(parts) < 2:
+        return None
+
+    owner = parts[0]
+    repo = parts[1].removesuffix(".git")
+
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", owner):
+        return None
+
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", repo):
+        return None
+
     return owner, repo
 
 
-class DevTools(commands.Cog, name="Developer Tools"):
-    """Developer utilities and coding tools for the Horizon Devs community."""
+def parse_github_user(value: str) -> str | None:
+    """Extract a GitHub username from a username or profile URL."""
+    value = value.strip().rstrip("/")
+
+    if not value:
+        return None
+
+    # Plain username
+    if "/" not in value and "://" not in value:
+        if re.fullmatch(r"[A-Za-z0-9-]+", value):
+            return value
+
+        return None
+
+    if not re.match(r"^https?://", value, re.IGNORECASE):
+        value = f"https://{value}"
+
+    try:
+        parsed = urlparse(value)
+    except ValueError:
+        return None
+
+    if parsed.netloc.lower() not in {
+        "github.com",
+        "www.github.com",
+    }:
+        return None
+
+    parts = [
+        part
+        for part in parsed.path.strip("/").split("/")
+        if part
+    ]
+
+    if len(parts) != 1:
+        return None
+
+    username = parts[0]
+
+    if not re.fullmatch(r"[A-Za-z0-9-]+", username):
+        return None
+
+    return username
+
+
+async def github_get(
+    endpoint: str,
+) -> tuple[int, dict | list | None]:
+    """Perform a GET request against the GitHub API."""
+    session = await get_session()
+
+    url = f"{GITHUB_API}{endpoint}"
+
+    try:
+        async with session.get(
+            url,
+            headers=github_headers(),
+            timeout=10,
+        ) as response:
+            try:
+                data = await response.json()
+            except Exception:
+                data = None
+
+            return response.status, data
+
+    except Exception:
+        logger.exception("GitHub API request failed: %s", endpoint)
+        return 0, None
+
+
+# ---------------------------------------------------------------------------
+# Cog
+# ---------------------------------------------------------------------------
+
+
+class DevTools(commands.Cog):
+    """Developer-focused utility commands."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    # =========================================================================
-    # CODE EXECUTION (/run via Judge0 CE)
-    # =========================================================================
+        logger.info("DevTools cog initialized successfully.")
 
-    @commands.hybrid_command(
-        name="run",
-        description="Execute a code snippet in an isolated sandbox via Judge0 CE (Python, JS, C++, Rust, etc.).",
-    )
-    async def run_code(
-        self,
-        ctx: commands.Context,
-        language: str,
-        *,
-        code: str,
-    ) -> None:
-        """Execute code using Judge0 CE."""
-        if ctx.interaction and not ctx.interaction.response.is_done():
-            await ctx.interaction.response.defer()
+    # -----------------------------------------------------------------------
+    # /github
+    # -----------------------------------------------------------------------
 
-        clean_lang = language.lower().strip()
-        lang_id = JUDGE0_LANGUAGES.get(clean_lang)
-        source_code = clean_code_block(code)
-
-        if not source_code:
-            await ctx.send("❌ Please provide valid code to execute.")
-            return
-
-        if lang_id is None:
-            supported = ", ".join(sorted(set(JUDGE0_LANGUAGES.keys())))
-            await ctx.send(f"❌ Unsupported language `{language}`.\nSupported:\n`{supported}`")
-            return
-
-        is_rapidapi = "rapidapi.com" in JUDGE0_URL
-        if is_rapidapi and not RAPIDAPI_KEY:
-            embed = discord.Embed(
-                title="⚙️ Judge0 CE Configuration Needed",
-                description=(
-                    "To execute code, please configure your free **RapidAPI Key**:\n\n"
-                    "1. Get a key at [RapidAPI Judge0 CE](https://rapidapi.com/judge0-official/api/judge0-ce) (50 free requests/day).\n"
-                    "2. Add `RAPIDAPI_KEY=\"your_key_here\"` to your `.env` file.\n\n"
-                    "*Alternatively, if self-hosting Judge0 via Docker, set `JUDGE0_URL=http://localhost:2358`.*"
-                ),
-                color=discord.Color.orange(),
-            )
-            await ctx.send(embed=embed)
-            return
-
-        payload = {
-            "language_id": lang_id,
-            "source_code": source_code,
-            "stdin": "",
-        }
-
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
-        if is_rapidapi and RAPIDAPI_KEY:
-            headers["X-RapidAPI-Key"] = RAPIDAPI_KEY
-            headers["X-RapidAPI-Host"] = "judge0-ce.p.rapidapi.com"
-
-        execute_url = f"{JUDGE0_URL.rstrip('/')}/submissions?base64_encoded=false&wait=true"
-        session = await get_session()
-
-        try:
-            async with session.post(execute_url, json=payload, headers=headers) as resp:
-                if resp.status in (401, 403):
-                    await ctx.send("❌ Judge0 API authorization failed. Please check `RAPIDAPI_KEY` in `.env`.")
-                    return
-
-                if resp.status not in (200, 201):
-                    err_text = await resp.text()
-                    await ctx.send(f"❌ Judge0 execution error (HTTP {resp.status}): {err_text[:200]}")
-                    return
-
-                result = await resp.json()
-
-        except Exception as err:
-            await ctx.send(f"❌ Error connecting to Judge0 execution engine: {err}")
-            return
-
-        status = result.get("status", {})
-        status_desc = status.get("description", "Unknown")
-        status_id = status.get("id", 0)
-
-        stdout = result.get("stdout") or ""
-        stderr = result.get("stderr") or ""
-        compile_output = result.get("compile_output") or ""
-        exec_time = result.get("time") or "0.00"
-        memory = result.get("memory") or 0
-
-        # Judge0 Status ID 3 is "Accepted"
-        is_success = (status_id == 3)
-        embed_color = discord.Color.green() if is_success else discord.Color.red()
-
-        embed = discord.Embed(
-            title=f"Code Execution: {clean_lang.capitalize()} • {status_desc}",
-            color=embed_color,
-        )
-
-        output_text = stdout or "(No stdout produced)"
-        if len(output_text) > 1000:
-            output_text = output_text[:1000] + "\n... [Output truncated]"
-
-        embed.add_field(
-            name="Output",
-            value=f"```{clean_lang}\n{output_text}\n```",
-            inline=False,
-        )
-
-        error_details = compile_output or stderr
-        if error_details:
-            if len(error_details) > 800:
-                error_details = error_details[:800] + "\n... [Error truncated]"
-            embed.add_field(
-                name="Error / Compiler Output",
-                value=f"```\n{error_details}\n```",
-                inline=False,
-            )
-
-        embed.set_footer(
-            text=f"Status: {status_desc} • Time: {exec_time}s • Memory: {memory:,} KB • Requested by {ctx.author}",
-            icon_url=ctx.author.display_avatar.url,
-        )
-
-        await ctx.send(embed=embed)
-
-    # =========================================================================
-    # GITHUB REPO LOOKUP (/github)
-    # =========================================================================
-
-    @commands.hybrid_command(
+    @app_commands.command(
         name="github",
-        description="Lookup repository stats, stars, issues, and license on GitHub.",
+        description="Look up a GitHub repository.",
     )
-    async def github_lookup(
+    @app_commands.describe(
+        repository="GitHub repository, e.g. discord.py or owner/repo",
+    )
+    async def github(
         self,
-        ctx: commands.Context,
-        *,
-        repo: str,
+        interaction: discord.Interaction,
+        repository: str,
     ) -> None:
-        """Fetch statistics for a GitHub repository."""
-        if ctx.interaction and not ctx.interaction.response.is_done():
-            await ctx.interaction.response.defer()
+        """Display GitHub repository information."""
+        parsed = parse_github_repo(repository)
 
-        parsed = parse_github_repo(repo)
-        if not parsed:
-            await ctx.send("❌ Please provide a valid repository in `owner/repo` format.")
+        if parsed is None:
+            await interaction.response.send_message(
+                "Invalid GitHub repository.\n"
+                "Use something like `owner/repository`.",
+                ephemeral=True,
+            )
             return
 
-        owner, repo_name = parsed
-        api_url = f"https://api.github.com/repos/{owner}/{repo_name}"
-        session = await get_session()
+        owner, repo = parsed
 
-        headers = {
-            "Accept": "application/vnd.github.v3+json",
-            "User-Agent": "HorizonDevs-Bot",
-        }
+        await interaction.response.defer()
 
-        try:
-            async with session.get(api_url, headers=headers) as resp:
-                if resp.status == 404:
-                    await ctx.send(f"❌ Repository `{owner}/{repo_name}` was not found.")
-                    return
-                if resp.status != 200:
-                    await ctx.send(f"❌ GitHub API error (HTTP {resp.status}).")
-                    return
-                data = await resp.json()
-        except Exception as err:
-            await ctx.send(f"❌ Failed to reach GitHub: {err}")
+        status, data = await github_get(
+            f"/repos/{quote(owner)}/{quote(repo)}"
+        )
+
+        if status == 404:
+            await interaction.followup.send(
+                f"GitHub repository `{owner}/{repo}` was not found."
+            )
             return
+
+        if status == 403:
+            await interaction.followup.send(
+                "GitHub API rate limit reached. Try again later."
+            )
+            return
+
+        if status != 200 or not isinstance(data, dict):
+            await interaction.followup.send(
+                "I couldn't retrieve that GitHub repository right now."
+            )
+            return
+
+        description = data.get("description") or "No description."
 
         embed = discord.Embed(
-            title=data.get("full_name", f"{owner}/{repo_name}"),
+            title=data.get("full_name", f"{owner}/{repo}"),
+            description=truncate(description, 1000),
             url=data.get("html_url"),
-            description=data.get("description") or "No description provided.",
-            color=discord.Color.blurple(),
-        )
-
-        owner_info = data.get("owner", {})
-        if owner_info.get("avatar_url"):
-            embed.set_thumbnail(url=owner_info["avatar_url"])
-
-        embed.add_field(name="⭐ Stars", value=f"{data.get('stargazers_count', 0):,}", inline=True)
-        embed.add_field(name="🍴 Forks", value=f"{data.get('forks_count', 0):,}", inline=True)
-        embed.add_field(name="🐛 Issues", value=f"{data.get('open_issues_count', 0):,}", inline=True)
-
-        lang = data.get("language") or "None"
-        license_info = data.get("license") or {}
-        license_name = license_info.get("spdx_id") or license_info.get("name") or "None"
-
-        embed.add_field(name="💻 Language", value=lang, inline=True)
-        embed.add_field(name="📜 License", value=license_name, inline=True)
-        embed.add_field(name="🌿 Default Branch", value=f"`{data.get('default_branch', 'main')}`", inline=True)
-
-        embed.set_footer(
-            text=f"Requested by {ctx.author}",
-            icon_url=ctx.author.display_avatar.url,
-        )
-
-        await ctx.send(embed=embed)
-
-    # =========================================================================
-    # PYPI PACKAGE LOOKUP (/pypi)
-    # =========================================================================
-
-    @commands.hybrid_command(
-        name="pypi",
-        description="Search for a Python package on PyPI.",
-    )
-    async def pypi_lookup(
-        self,
-        ctx: commands.Context,
-        package: str,
-    ) -> None:
-        """Fetch details for a Python package from PyPI."""
-        if ctx.interaction and not ctx.interaction.response.is_done():
-            await ctx.interaction.response.defer()
-
-        clean_pkg = package.strip().lower()
-        api_url = f"https://pypi.org/pypi/{clean_pkg}/json"
-        session = await get_session()
-
-        try:
-            async with session.get(api_url) as resp:
-                if resp.status == 404:
-                    await ctx.send(f"❌ Package `{package}` was not found on PyPI.")
-                    return
-                if resp.status != 200:
-                    await ctx.send(f"❌ PyPI API error (HTTP {resp.status}).")
-                    return
-                data = await resp.json()
-        except Exception as err:
-            await ctx.send(f"❌ Failed to reach PyPI: {err}")
-            return
-
-        info = data.get("info", {})
-        embed = discord.Embed(
-            title=f"📦 {info.get('name', clean_pkg)} v{info.get('version', '')}",
-            url=info.get("project_url") or f"https://pypi.org/project/{clean_pkg}/",
-            description=info.get("summary") or "No description provided.",
-            color=discord.Color.blue(),
         )
 
         embed.add_field(
-            name="Install",
-            value=f"`pip install {info.get('name', clean_pkg)}`",
-            inline=False,
-        )
-
-        author = info.get("author") or info.get("maintainer") or "Unknown"
-        license_name = info.get("license") or "Not specified"
-        if len(license_name) > 30:
-            license_name = license_name[:27] + "..."
-
-        embed.add_field(name="Author", value=author, inline=True)
-        embed.add_field(name="License", value=license_name, inline=True)
-
-        home_page = info.get("home_page") or info.get("project_urls", {}).get("Homepage")
-        if home_page:
-            embed.add_field(name="Homepage", value=f"[Link]({home_page})", inline=True)
-
-        embed.set_footer(
-            text=f"Requested by {ctx.author}",
-            icon_url=ctx.author.display_avatar.url,
-        )
-
-        await ctx.send(embed=embed)
-
-    # =========================================================================
-    # NPM PACKAGE LOOKUP (/npm)
-    # =========================================================================
-
-    @commands.hybrid_command(
-        name="npm",
-        description="Search for a Node.js / JavaScript package on npm.",
-    )
-    async def npm_lookup(
-        self,
-        ctx: commands.Context,
-        package: str,
-    ) -> None:
-        """Fetch details for a Node.js package from the npm registry."""
-        if ctx.interaction and not ctx.interaction.response.is_done():
-            await ctx.interaction.response.defer()
-
-        clean_pkg = package.strip().lower()
-        api_url = f"https://registry.npmjs.org/{clean_pkg}"
-        downloads_url = f"https://api.npmjs.org/downloads/point/last-week/{clean_pkg}"
-        session = await get_session()
-
-        try:
-            async with session.get(api_url) as resp:
-                if resp.status == 404:
-                    await ctx.send(f"❌ Package `{package}` was not found on npm.")
-                    return
-                if resp.status != 200:
-                    await ctx.send(f"❌ npm registry error (HTTP {resp.status}).")
-                    return
-                data = await resp.json()
-        except Exception as err:
-            await ctx.send(f"❌ Failed to reach npm registry: {err}")
-            return
-
-        # Attempt to fetch weekly downloads
-        weekly_downloads: Optional[int] = None
-        try:
-            async with session.get(downloads_url) as dl_resp:
-                if dl_resp.status == 200:
-                    dl_data = await dl_resp.json()
-                    weekly_downloads = dl_data.get("downloads")
-        except Exception:
-            pass
-
-        dist_tags = data.get("dist-tags", {})
-        latest_ver = dist_tags.get("latest", "unknown")
-        version_data = data.get("versions", {}).get(latest_ver, {}) if latest_ver != "unknown" else {}
-
-        description = data.get("description") or version_data.get("description") or "No description provided."
-        license_name = version_data.get("license") or data.get("license") or "Not specified"
-        if isinstance(license_name, dict):
-            license_name = license_name.get("type", "Custom")
-
-        embed = discord.Embed(
-            title=f"📦 {clean_pkg} v{latest_ver}",
-            url=f"https://www.npmjs.com/package/{clean_pkg}",
-            description=description,
-            color=discord.Color.red(),
-        )
-
-        embed.add_field(
-            name="Install",
-            value=f"```bash\nnpm i {clean_pkg}\n```",
-            inline=False,
-        )
-
-        if weekly_downloads is not None:
-            embed.add_field(name="📈 Weekly Downloads", value=f"{weekly_downloads:,}", inline=True)
-
-        embed.add_field(name="📜 License", value=str(license_name)[:30], inline=True)
-
-        deps_count = len(version_data.get("dependencies", {}))
-        dev_deps_count = len(version_data.get("devDependencies", {}))
-        embed.add_field(
-            name="🔗 Dependencies",
-            value=f"{deps_count} direct • {dev_deps_count} dev",
+            name="Language",
+            value=data.get("language") or "Unknown",
             inline=True,
         )
 
-        homepage = version_data.get("homepage") or data.get("homepage")
-        repo = version_data.get("repository") or data.get("repository")
-        links: List[str] = []
-        if homepage:
-            links.append(f"[Homepage]({homepage})")
-        if isinstance(repo, dict) and repo.get("url"):
-            clean_repo = repo["url"].replace("git+", "").replace(".git", "")
-            links.append(f"[Repository]({clean_repo})")
-        elif isinstance(repo, str):
-            clean_repo = repo.replace("git+", "").replace(".git", "")
-            links.append(f"[Repository]({clean_repo})")
-
-        if links:
-            embed.add_field(name="🌐 Links", value=" • ".join(links), inline=False)
-
-        embed.set_footer(
-            text=f"Requested by {ctx.author}",
-            icon_url=ctx.author.display_avatar.url,
+        embed.add_field(
+            name="Stars",
+            value=format_number(data.get("stargazers_count")),
+            inline=True,
         )
 
-        await ctx.send(embed=embed)
+        embed.add_field(
+            name="Forks",
+            value=format_number(data.get("forks_count")),
+            inline=True,
+        )
 
-    # =========================================================================
-    # CHEAT SHEET LOOKUP (/cheat)
-    # =========================================================================
+        embed.add_field(
+            name="Issues",
+            value=format_number(data.get("open_issues_count")),
+            inline=True,
+        )
 
+        embed.add_field(
+            name="License",
+            value=(
+                data.get("license", {}).get("spdx_id")
+                if data.get("license")
+                else "None"
+            ),
+            inline=True,
+        )
 
-    @commands.hybrid_command(
-        name="cheat",
-        description="Quick programming/CLI cheat sheet reference (e.g. /cheat git rebase or /cheat tar).",
+        embed.add_field(
+            name="Updated",
+            value=format_date(data.get("updated_at")),
+            inline=True,
+        )
+
+        await interaction.followup.send(embed=embed)
+
+    # -----------------------------------------------------------------------
+    # /github-user
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="github-user",
+        description="Look up a GitHub user.",
     )
-    async def cheat_lookup(
+    @app_commands.describe(
+        username="GitHub username or profile URL",
+    )
+    async def github_user(
         self,
-        ctx: commands.Context,
-        *,
-        query: str,
+        interaction: discord.Interaction,
+        username: str,
     ) -> None:
-        """Fetch cheat sheet notes from cheat.sh."""
-        if ctx.interaction and not ctx.interaction.response.is_done():
-            await ctx.interaction.response.defer()
+        """Display GitHub user information."""
+        clean_username = parse_github_user(username)
 
-        clean_query = query.strip().replace(" ", "+")
-        url = f"https://cheat.sh/{clean_query}?T"
-        session = await get_session()
-
-        headers = {"User-Agent": "curl/7.68.0"}
-
-        try:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status != 200:
-                    await ctx.send(f"❌ Could not retrieve cheat sheet for `{query}`.")
-                    return
-                text = await resp.text()
-        except Exception as err:
-            await ctx.send(f"❌ Failed to reach cheat.sh: {err}")
+        if clean_username is None:
+            await interaction.response.send_message(
+                "Invalid GitHub username or profile URL.",
+                ephemeral=True,
+            )
             return
 
-        # Strip terminal ANSI codes
-        cleaned = ANSI_ESCAPE_RE.sub("", text).strip()
-        if not cleaned or "ERROR: " in cleaned[:20]:
-            await ctx.send(f"❌ No cheat sheet found for `{query}`.")
+        await interaction.response.defer()
+
+        status, data = await github_get(
+            f"/users/{quote(clean_username)}"
+        )
+
+        if status == 404:
+            await interaction.followup.send(
+                f"GitHub user `{clean_username}` was not found."
+            )
             return
 
-        if len(cleaned) > 1500:
-            cleaned = cleaned[:1500] + "\n... [Truncated. Run in terminal: curl cheat.sh/" + clean_query + "]"
+        if status == 403:
+            await interaction.followup.send(
+                "GitHub API rate limit reached. Try again later."
+            )
+            return
+
+        if status != 200 or not isinstance(data, dict):
+            await interaction.followup.send(
+                "I couldn't retrieve that GitHub user right now."
+            )
+            return
+
+        name = data.get("name") or data.get("login")
 
         embed = discord.Embed(
-            title=f"📖 Cheat Sheet: {query}",
-            description=f"```bash\n{cleaned}\n```",
-            color=discord.Color.dark_teal(),
-        )
-        embed.set_footer(
-            text=f"Source: cheat.sh • Requested by {ctx.author}",
-            icon_url=ctx.author.display_avatar.url,
+            title=f"GitHub User — {name}",
+            description=data.get("bio") or "No bio.",
+            url=data.get("html_url"),
         )
 
-        await ctx.send(embed=embed)
+        avatar = data.get("avatar_url")
+
+        if avatar:
+            embed.set_thumbnail(url=avatar)
+
+        embed.add_field(
+            name="Username",
+            value=f"`@{data.get('login', clean_username)}`",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Public Repos",
+            value=format_number(data.get("public_repos")),
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Followers",
+            value=format_number(data.get("followers")),
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Following",
+            value=format_number(data.get("following")),
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Location",
+            value=data.get("location") or "Unknown",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Joined",
+            value=format_date(data.get("created_at")),
+            inline=True,
+        )
+
+        await interaction.followup.send(embed=embed)
+
+    # -----------------------------------------------------------------------
+    # /github-commits
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="github-commits",
+        description="Show recent commits from a GitHub repository.",
+    )
+    @app_commands.describe(
+        repository="GitHub repository, e.g. owner/repository",
+    )
+    async def github_commits(
+        self,
+        interaction: discord.Interaction,
+        repository: str,
+    ) -> None:
+        """Display the latest commits."""
+        parsed = parse_github_repo(repository)
+
+        if parsed is None:
+            await interaction.response.send_message(
+                "Invalid GitHub repository.\n"
+                "Use something like `owner/repository`.",
+                ephemeral=True,
+            )
+            return
+
+        owner, repo = parsed
+
+        await interaction.response.defer()
+
+        status, data = await github_get(
+            f"/repos/{quote(owner)}/{quote(repo)}/commits"
+            f"?per_page={GITHUB_COMMITS_PER_PAGE}"
+        )
+
+        if status == 404:
+            await interaction.followup.send(
+                f"GitHub repository `{owner}/{repo}` was not found."
+            )
+            return
+
+        if status == 403:
+            await interaction.followup.send(
+                "GitHub API rate limit reached. Try again later."
+            )
+            return
+
+        if status != 200 or not isinstance(data, list):
+            await interaction.followup.send(
+                "I couldn't retrieve the commits right now."
+            )
+            return
+
+        if not data:
+            await interaction.followup.send(
+                f"`{owner}/{repo}` doesn't have any commits."
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"Recent Commits — {owner}/{repo}",
+            url=f"https://github.com/{owner}/{repo}/commits",
+        )
+
+        for commit in data:
+            commit_data = commit.get("commit", {})
+            author_data = commit_data.get("author", {})
+
+            message = (
+                commit_data.get("message", "No commit message.")
+                .splitlines()[0]
+            )
+
+            sha = commit.get("sha", "")[:7]
+            author = (
+                author_data.get("name")
+                or commit.get("author", {}).get("login")
+                or "Unknown"
+            )
+
+            date = format_date(author_data.get("date"))
+
+            commit_url = commit.get("html_url")
+
+            value = (
+                f"**{truncate(message, 180)}**\n"
+                f"`{sha}` • {author} • {date}"
+            )
+
+            if commit_url:
+                value += f"\n[View commit]({commit_url})"
+
+            embed.add_field(
+                name="Commit",
+                value=value,
+                inline=False,
+            )
+
+        await interaction.followup.send(embed=embed)
+
+    # -----------------------------------------------------------------------
+    # /pypi
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="pypi",
+        description="Look up a Python package on PyPI.",
+    )
+    @app_commands.describe(
+        package="Python package name, e.g. discord.py",
+    )
+    async def pypi(
+        self,
+        interaction: discord.Interaction,
+        package: str,
+    ) -> None:
+        """Display PyPI package information."""
+        clean_pkg = package.strip()
+
+        if not clean_pkg:
+            await interaction.response.send_message(
+                "Please provide a package name.",
+                ephemeral=True,
+            )
+            return
+
+        if len(clean_pkg) > 200:
+            await interaction.response.send_message(
+                "That package name is too long.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        session = await get_session()
+
+        url = f"https://pypi.org/pypi/{quote(clean_pkg)}/json"
+
+        try:
+            async with session.get(url, timeout=10) as response:
+                if response.status == 404:
+                    await interaction.followup.send(
+                        f"PyPI package `{clean_pkg}` was not found."
+                    )
+                    return
+
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "PyPI couldn't be reached right now."
+                    )
+                    return
+
+                data = await response.json()
+
+        except Exception:
+            logger.exception("PyPI request failed for %s", clean_pkg)
+
+            await interaction.followup.send(
+                "I couldn't retrieve that package right now."
+            )
+            return
+
+        info = data.get("info", {})
+
+        project_url = info.get("project_url")
+        homepage = info.get("home_page")
+
+        embed = discord.Embed(
+            title=info.get("name", clean_pkg),
+            description=truncate(
+                info.get("summary") or "No description.",
+                1000,
+            ),
+            url=project_url or f"https://pypi.org/project/{clean_pkg}/",
+        )
+
+        embed.add_field(
+            name="Version",
+            value=info.get("version") or "Unknown",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Python",
+            value=info.get("requires_python") or "Not specified",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="License",
+            value=info.get("license") or "Unknown",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Author",
+            value=truncate(info.get("author") or "Unknown", 100),
+            inline=True,
+        )
+
+        dependencies = info.get("requires_dist") or []
+
+        embed.add_field(
+            name="Dependencies",
+            value=format_number(len(dependencies)),
+            inline=True,
+        )
+
+        if homepage:
+            embed.add_field(
+                name="Homepage",
+                value=f"[Open project]({homepage})",
+                inline=True,
+            )
+
+        await interaction.followup.send(embed=embed)
+
+    # -----------------------------------------------------------------------
+    # /npm
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="npm",
+        description="Look up an npm package.",
+    )
+    @app_commands.describe(
+        package="npm package name, e.g. discord.js",
+    )
+    async def npm(
+        self,
+        interaction: discord.Interaction,
+        package: str,
+    ) -> None:
+        """Display npm package information."""
+        clean_pkg = package.strip()
+
+        if not clean_pkg:
+            await interaction.response.send_message(
+                "Please provide a package name.",
+                ephemeral=True,
+            )
+            return
+
+        if len(clean_pkg) > 200:
+            await interaction.response.send_message(
+                "That package name is too long.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        session = await get_session()
+
+        encoded_pkg = quote(clean_pkg, safe="@/")
+
+        registry_url = (
+            f"https://registry.npmjs.org/{encoded_pkg}"
+        )
+
+        downloads_url = (
+            "https://api.npmjs.org/downloads/point/"
+            f"last-week/{encoded_pkg}"
+        )
+
+        try:
+            async with session.get(
+                registry_url,
+                timeout=10,
+            ) as response:
+                if response.status == 404:
+                    await interaction.followup.send(
+                        f"npm package `{clean_pkg}` was not found."
+                    )
+                    return
+
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "The npm registry couldn't be reached right now."
+                    )
+                    return
+
+                data = await response.json()
+
+            weekly_downloads = None
+
+            try:
+                async with session.get(
+                    downloads_url,
+                    timeout=10,
+                ) as response:
+                    if response.status == 200:
+                        downloads_data = await response.json()
+                        weekly_downloads = downloads_data.get("downloads")
+
+            except Exception:
+                logger.warning(
+                    "npm download count request failed for %s",
+                    clean_pkg,
+                )
+
+        except Exception:
+            logger.exception("npm request failed for %s", clean_pkg)
+
+            await interaction.followup.send(
+                "I couldn't retrieve that package right now."
+            )
+            return
+
+        latest_version = (
+            data.get("dist-tags", {}).get("latest")
+            or "Unknown"
+        )
+
+        repository = data.get("repository") or {}
+
+        if isinstance(repository, dict):
+            repository_url = repository.get("url")
+        else:
+            repository_url = None
+
+        homepage = data.get("homepage")
+
+        dependencies = (
+            data.get("versions", {})
+            .get(latest_version, {})
+            .get("dependencies", {})
+        )
+
+        embed = discord.Embed(
+            title=data.get("name", clean_pkg),
+            description=truncate(
+                data.get("description") or "No description.",
+                1000,
+            ),
+            url=f"https://www.npmjs.com/package/{encoded_pkg}",
+        )
+
+        embed.add_field(
+            name="Version",
+            value=latest_version,
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Weekly Downloads",
+            value=format_number(weekly_downloads),
+            inline=True,
+        )
+
+        embed.add_field(
+            name="License",
+            value=data.get("license") or "Unknown",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Dependencies",
+            value=format_number(len(dependencies)),
+            inline=True,
+        )
+
+        if repository_url:
+            repository_url = repository_url.removeprefix("git+")
+            repository_url = repository_url.removesuffix(".git")
+
+            embed.add_field(
+                name="Repository",
+                value=f"[Open repository]({repository_url})",
+                inline=True,
+            )
+
+        if homepage:
+            embed.add_field(
+                name="Homepage",
+                value=f"[Open homepage]({homepage})",
+                inline=True,
+            )
+
+        await interaction.followup.send(embed=embed)
+
+    # -----------------------------------------------------------------------
+    # /cheat
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="cheat",
+        description="Search cheat.sh for a programming reference.",
+    )
+    @app_commands.describe(
+        query="What you need help with, e.g. python list",
+    )
+    async def cheat(
+        self,
+        interaction: discord.Interaction,
+        query: str,
+    ) -> None:
+        """Search cheat.sh."""
+        clean_query = query.strip()
+
+        if not clean_query:
+            await interaction.response.send_message(
+                "Please provide something to search for.",
+                ephemeral=True,
+            )
+            return
+
+        if len(clean_query) > 200:
+            await interaction.response.send_message(
+                "That search query is too long.",
+                ephemeral=True,
+            )
+            return
+
+        await interaction.response.defer()
+
+        session = await get_session()
+
+        encoded_query = quote(
+            clean_query,
+            safe="/+",
+        )
+
+        url = f"https://cheat.sh/{encoded_query}?T"
+
+        try:
+            async with session.get(
+                url,
+                timeout=10,
+                headers={
+                    "User-Agent": "Horizon-Devs-Bot",
+                },
+            ) as response:
+                if response.status != 200:
+                    await interaction.followup.send(
+                        "cheat.sh couldn't find a result for that query."
+                    )
+                    return
+
+                result = await response.text()
+
+        except Exception:
+            logger.exception(
+                "cheat.sh request failed for %s",
+                clean_query,
+            )
+
+            await interaction.followup.send(
+                "I couldn't reach cheat.sh right now."
+            )
+            return
+
+        # Remove common ANSI escape sequences.
+        result = re.sub(
+            r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])",
+            "",
+            result,
+        ).strip()
+
+        if not result:
+            await interaction.followup.send(
+                "cheat.sh returned an empty result."
+            )
+            return
+
+        result = truncate(result, CHEAT_MAX_OUTPUT)
+
+        if len(result) > 1900:
+            result = result[:1850] + "\n... output truncated"
+
+        await interaction.followup.send(
+            f"```text\n{result}\n```"
+        )
+
+    # -----------------------------------------------------------------------
+    # /json
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="json",
+        description="Validate and pretty-print JSON.",
+    )
+    @app_commands.describe(
+        data="JSON data. Code blocks are supported.",
+    )
+    async def json_command(
+        self,
+        interaction: discord.Interaction,
+        data: str,
+    ) -> None:
+        """Validate and format JSON."""
+        data = clean_code_block(data)
+
+        if not data:
+            await interaction.response.send_message(
+                "Please provide JSON.",
+                ephemeral=True,
+            )
+            return
+
+        if len(data) > MAX_JSON_INPUT:
+            await interaction.response.send_message(
+                f"JSON input is limited to {MAX_JSON_INPUT} characters.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            parsed = json.loads(data)
+
+        except json.JSONDecodeError as exc:
+            line = exc.lineno
+            column = exc.colno
+
+            await interaction.response.send_message(
+                "Invalid JSON.\n"
+                f"Error: `{exc.msg}`\n"
+                f"Location: line `{line}`, column `{column}`",
+                ephemeral=True,
+            )
+            return
+
+        formatted = json.dumps(
+            parsed,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+        if len(formatted) > 1900:
+            formatted = formatted[:1850] + "\n... output truncated"
+
+        await interaction.response.send_message(
+            "Valid JSON.\n"
+            f"```json\n{formatted}\n```"
+        )
+
+    # -----------------------------------------------------------------------
+    # /diff
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="diff",
+        description="Compare two pieces of text.",
+    )
+    @app_commands.describe(
+        before="Original text",
+        after="New text",
+    )
+    async def diff(
+        self,
+        interaction: discord.Interaction,
+        before: str,
+        after: str,
+    ) -> None:
+        """Generate a unified diff."""
+        before = clean_code_block(before)
+        after = clean_code_block(after)
+
+        if len(before) > MAX_DIFF_INPUT:
+            await interaction.response.send_message(
+                f"Original text is limited to {MAX_DIFF_INPUT} characters.",
+                ephemeral=True,
+            )
+            return
+
+        if len(after) > MAX_DIFF_INPUT:
+            await interaction.response.send_message(
+                f"New text is limited to {MAX_DIFF_INPUT} characters.",
+                ephemeral=True,
+            )
+            return
+
+        if before == after:
+            await interaction.response.send_message(
+                "No changes detected."
+            )
+            return
+
+        before_lines = before.splitlines()
+        after_lines = after.splitlines()
+
+        diff_lines = difflib.unified_diff(
+            before_lines,
+            after_lines,
+            fromfile="before",
+            tofile="after",
+            lineterm="",
+        )
+
+        diff_text = "\n".join(diff_lines)
+
+        if not diff_text:
+            await interaction.response.send_message(
+                "No changes detected."
+            )
+            return
+
+        diff_text = truncate(diff_text, 1800)
+
+        await interaction.response.send_message(
+            f"```diff\n{diff_text}\n```"
+        )
+
+    # -----------------------------------------------------------------------
+    # /regex
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(
+        name="regex",
+        description="Test a regular expression against text.",
+    )
+    @app_commands.describe(
+        pattern="Regular expression pattern",
+        text="Text to test",
+    )
+    async def regex(
+        self,
+        interaction: discord.Interaction,
+        pattern: str,
+        text: str,
+    ) -> None:
+        """Test a Python regular expression."""
+        if len(pattern) > MAX_REGEX_PATTERN:
+            await interaction.response.send_message(
+                f"Regex pattern is limited to {MAX_REGEX_PATTERN} characters.",
+                ephemeral=True,
+            )
+            return
+
+        if len(text) > MAX_REGEX_TEXT:
+            await interaction.response.send_message(
+                f"Test text is limited to {MAX_REGEX_TEXT} characters.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            compiled = re.compile(pattern)
+
+        except re.error as exc:
+            await interaction.response.send_message(
+                "Invalid regex pattern.\n"
+                f"Error: `{exc}`",
+                ephemeral=True,
+            )
+            return
+
+        match = compiled.search(text)
+
+        if match is None:
+            embed = discord.Embed(
+                title="Regex Test",
+                description="No match found.",
+            )
+
+            embed.add_field(
+                name="Pattern",
+                value=f"`{truncate(pattern, 900)}`",
+                inline=False,
+            )
+
+            await interaction.response.send_message(
+                embed=embed
+            )
+            return
+
+        matched_text = match.group(0)
+
+        groups = match.groups()
+
+        embed = discord.Embed(
+            title="Regex Test",
+            description="Match found.",
+        )
+
+        embed.add_field(
+            name="Pattern",
+            value=f"`{truncate(pattern, 900)}`",
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Matched",
+            value=f"`{truncate(matched_text, 900)}`",
+            inline=False,
+        )
+
+        embed.add_field(
+            name="Position",
+            value=f"`{match.start()} → {match.end()}`",
+            inline=True,
+        )
+
+        embed.add_field(
+            name="Groups",
+            value=str(len(groups)),
+            inline=True,
+        )
+
+        if groups:
+            formatted_groups = "\n".join(
+                f"`{index}` → `{truncate(str(value), 300)}`"
+                for index, value in enumerate(groups, start=1)
+            )
+
+            embed.add_field(
+                name="Captured Groups",
+                value=truncate(formatted_groups, 1000),
+                inline=False,
+            )
+
+        await interaction.response.send_message(
+            embed=embed
+        )
+
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 
 
 async def setup(bot: commands.Bot) -> None:
-    """Load the Developer Tools cog."""
+    """Load the DevTools cog."""
     await bot.add_cog(DevTools(bot))
+
+    logger.info("DevTools cog loaded successfully.")

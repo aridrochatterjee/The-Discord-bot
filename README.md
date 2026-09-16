@@ -1,182 +1,627 @@
 # ⚡ Horizon Devs — Discord Bot
 
-An advanced, feature-packed Discord bot tailored for the **Horizon Devs** developer community. Built with Python 3.11+, `discord.py` 2.0+ (hybrid slash & prefix commands), and Supabase PostgreSQL.
+A feature-rich Discord bot built for the **Horizon Devs** developer community.
+
+The bot focuses on developer productivity, community participation, reputation, coding challenges, bounties, moderation, and useful developer utilities.
+
+Built with **Python 3.11+**, **discord.py 2.x**, and **Supabase PostgreSQL**.
 
 ---
 
-## 🚀 Features & Commands Overview
+## 🚀 Features
 
-All commands are **hybrid commands** supporting both slash (`/command`) and prefix (`.command`) interactions with full ephemeral error reporting, interactive modals, and persistent buttons.
+### 🛠️ Developer Tools
 
-### 🛠️ Developer Tools (`bot/cogs/dev_tools.py`)
-* **`/run <language> <code>`** — Execute code in an isolated sandbox via Judge0 CE (Python, JavaScript, TypeScript, C++, Rust, Go, Java, Bash, and 15+ others). Supports fenced markdown codeblocks (` ```python ... ``` `).
-* **`/github <owner/repo>`** — Fetch GitHub repository statistics (stars ⭐, forks 🍴, open issues 🐛, license, default branch, primary language, and repository links).
-* **`/pypi <package>`** — Inspect Python package metadata on PyPI (latest version, summary, author, license, and `pip install` snippets).
-* **`/npm <package>`** — Inspect Node.js/JavaScript package metadata on npm (latest version, description, formatted weekly downloads, license, direct & dev dependencies count, and `npm i` install snippets).
-* **`/cheat <query>`** — Instant command-line and programming cheat sheet search powered by `cheat.sh` (e.g. `/cheat git rebase`, `/cheat tar`, `/cheat docker`).
+Developer-focused utilities for working with GitHub, Python packages, JavaScript packages, JSON, regex, diffs, and command-line references.
 
----
+| Command | Description |
+|---|---|
+| `/github <owner/repo>` | View GitHub repository information such as stars, forks, issues, language, license, and links. |
+| `/github-user <username>` | View a GitHub user's public profile, repositories, followers, and account information. |
+| `/github-commits <owner/repo>` | View recent commits from a GitHub repository. |
+| `/pypi <package>` | Look up Python package metadata from PyPI. |
+| `/npm <package>` | Look up Node.js / JavaScript package information from npm. |
+| `/cheat <query>` | Search quick programming and CLI cheat sheets through cheat.sh. |
+| `/json <data>` | Validate and pretty-print JSON. |
+| `/diff` | Compare two pieces of text and display their differences. |
+| `/regex` | Test a regular expression against text and inspect matches. |
 
-### 🤖 Daily Developer Challenges (`bot/cogs/challenge.py`)
-Engage the developer community with daily coding challenges, difficulty points, and automated threads:
-* **`/challenge post <title> <description> [day_number] [rules] [easy_pts] [med_pts] [hard_pts] [duration_days] [ping_role]`** — *(Owner/Admin only)* Post daily coding challenges with customizable difficulty tiers (🟢 Easy, 🟡 Medium, 🔴 Hard), points, countdown timer, auto-created submission thread, and an interactive `🚀 Submit Solution` modal button.
-* **`/challenge award <id> <member> <points> [reason]`** — *(Owner/Admin only)* Award Dev Karma points directly to solvers and mark submissions as accepted.
-* **`/challenge end <id>`** — *(Owner/Admin only)* Close active challenges to lock new submissions.
-* **`/challenge list`** — Browse active and past challenges with deadlines and point structures.
-* **Interactive Submission Modal (`ChallengeSubmissionModal`)** — Prompts solvers for GitHub repository URL, live demo link, difficulty tier attempted, and architecture/implementation notes.
-
----
-
-### 💰 Dev Karma Bounties (`bot/cogs/bounty.py`)
-Peer-to-peer coding bounty economy backed by Dev Karma points:
-* **`/bounty create <title> <reward_karma> <description>`** — Post a challenging bug or feature request, staking Dev Karma points held in escrow. Automatically creates an announcement card with a `💡 Submit Solution` button and a dedicated discussion thread.
-* **`/bounty accept <bounty_id> <@solver>`** — The creator (or administrator) confirms a winning solution, instantly transferring the escrowed Dev Karma reward to `@solver` and marking the bounty `RESOLVED`.
-* **`/bounty cancel <bounty_id>`** — Cancel an unsolved bounty to refund the escrowed karma points back to the creator.
-* **`/bounty list`** — Browse currently open coding bounties in the server.
+> Developer tools are designed to be lightweight utilities that can be used directly from Discord.
 
 ---
 
-### 🌟 Community Showcase (`bot/cogs/community.py`)
-* **`/showcase`** — Opens an interactive popup modal to submit developer projects (Title, Tech Stack, Description, GitHub, Live Demo). Automatically creates a showcase card, attaches an interactive `⭐ Upvote` button (persistent across restarts), and opens a dedicated feedback discussion thread.
+## 🏆 Developer Challenges
+
+The challenge system gives the community structured coding problems with difficulty tiers and submissions.
+
+### Commands
+
+| Command | Description |
+|---|---|
+| `/challenge post` | Create a new developer challenge. |
+| `/challenge list` | Browse active and previous challenges. |
+| `/challenge award` | Award Dev Karma to a successful solver. |
+| `/challenge end` | End an active challenge. |
+
+### Challenge Features
+
+- 🟢 Easy / 🟡 Medium / 🔴 Hard difficulty tiers
+- Custom point values
+- Challenge deadlines
+- Automatic discussion/submission threads
+- Interactive solution submission modal
+- GitHub repository submissions
+- Live demo links
+- Implementation and architecture notes
+- Dev Karma rewards
+- Admin/owner controls
+
+Challenge submissions can be made through the interactive submission interface attached to the challenge.
 
 ---
 
-### 🏆 Dev Karma & Reputation (`bot/cogs/reputation.py`)
-* **`/thank <@member> [reason]`** — Award 1 Dev Karma point to a member who helped you with code or debugging.
-  - **Daily Limiter:** Strictly limited to **once per day per recipient** (rolling 24-hour window per user pair). Duplicate attempts reject the karma and show remaining hours/minutes.
-  - **Anti-Cheat:** Prevents self-thanking and bot-thanking.
-* **`/karma [@member]`** — Check karma points, developer rank tier (*🌱 Junior Helper*, *🛠️ Code Contributor*, *🏆 Community Mentor*, *⚡ Lead Architect*, *🧙‍♂️ Horizon Tech Sage*), and ASCII progress bar toward the next rank.
-* **`/leaderboard`** — View the top 10 most helpful developers and contributors in the server with medal badges (`🥇`, `🥈`, `🥉`).
+## 💰 Dev Karma Bounties
+
+The bounty system allows developers to post coding tasks with a Dev Karma reward.
+
+### Commands
+
+| Command | Description |
+|---|---|
+| `/bounty create` | Create a coding bounty with a Karma reward. |
+| `/bounty list` | View currently open bounties. |
+| `/bounty accept` | Accept a submitted solution and award the bounty reward. |
+| `/bounty cancel` | Cancel an open bounty and return the escrowed reward. |
+
+### Bounty Features
+
+- Karma-based rewards
+- Reward escrow
+- Dedicated bounty discussion threads
+- Interactive solution submission
+- Creator-controlled solution acceptance
+- Automatic bounty state management
+- Protection against invalid reward transfers
 
 ---
 
-### 🛡️ Moderation & Auto-Defense (`bot/cogs/moderation.py`)
-* **Commands:** `/ban`, `/kick`, `/softban`, `/timeout`, `/remove_timeout`, `/unban`, `/purge`.
-* **Automated Filtering:** Auto-deletes Discord invite links and adult domains with self-deleting warnings.
-* **Audit & DM Notifications:** Sends clear moderation notices to users with reasons and logs timestamps in `Asia/Kolkata` timezone.
+## 🌟 Community Showcase
+
+The showcase system lets developers share projects with the Horizon Devs community.
+
+### `/showcase`
+
+Opens an interactive submission modal for:
+
+- Project title
+- Tech stack
+- Project description
+- GitHub repository
+- Live demo
+
+After submission, the bot creates a showcase card with:
+
+- ⭐ Upvote button
+- Project information
+- GitHub / demo links
+- Dedicated feedback discussion thread
+
+Showcase voting is persisted in the database to prevent duplicate votes.
 
 ---
 
-### ℹ️ General Utilities & Presence (`bot/cogs/general.py`, `/bot/utils/status.py`)
-* **`/ping`** — Check bot websocket latency.
-* **`/server_info`** & **`/user_info`** — View server stats, channel counts, and detailed user profiles.
-* **Rotating Dev Status:** Background task rotating live member counts and funny developer quotes every 10 seconds.
+## 🏅 Dev Karma & Reputation
+
+The reputation system rewards members who actively help other developers.
+
+### `/thank <member> [reason]`
+
+Give another developer **1 Dev Karma** for helping with:
+
+- Debugging
+- Programming
+- Code reviews
+- Technical questions
+- Project assistance
+
+The system includes protection against:
+
+- Self-awards
+- Bot awards
+- Repeated awards within the cooldown period
+
+### `/karma [member]`
+
+View a developer's:
+
+- Current Dev Karma
+- Rank
+- Progress toward the next rank
+- Reputation progress bar
+
+### Developer Ranks
+
+| Rank | Title |
+|---|---|
+| 🌱 | Junior Helper |
+| 🛠️ | Code Contributor |
+| 🏆 | Community Mentor |
+| ⚡ | Lead Architect |
+| 🧙 | Horizon Tech Sage |
+
+### `/leaderboard`
+
+Displays the top contributors in the server.
 
 ---
 
-### 📖 Interactive Help (`bot/cogs/help.py`)
-* **`/help`** — Dynamic interactive select menu with categorized command embeds for Developer Tools, Community & Challenges, Moderation, and General Utilities.
+## 🛡️ Moderation
+
+The moderation system provides server-management commands and automatic protection.
+
+### Commands
+
+| Command | Description |
+|---|---|
+| `/ban` | Ban a member. |
+| `/kick` | Kick a member. |
+| `/softban` | Ban and immediately unban a member to remove recent messages. |
+| `/timeout` | Temporarily restrict a member. |
+| `/remove_timeout` | Remove an active timeout. |
+| `/unban` | Unban a user by Discord ID. |
+| `/purge` | Bulk-delete messages. |
+
+### Automatic Protection
+
+The bot can automatically detect and remove configured:
+
+- Discord invite links
+- Blocked/adult domains
+
+Temporary warning messages are used when automated filtering triggers.
+
+### Moderation Notifications
+
+Moderation actions can also provide users with clear notices containing the action and reason.
 
 ---
 
-## 🗄️ Database & Schema (`Supabase PostgreSQL`)
+## ℹ️ General Utilities
 
-The bot integrates with **Supabase PostgreSQL** via REST and async postgrest client:
-* **[`bot/database/schema.sql`](bot/database/schema.sql)** — Complete database schema with `BIGINT` snowflakes, performance indexes, and Row-Level Security (RLS) policies:
-  - `reputation` — User karma points and timestamps.
-  - `reputation_logs` — Audit log of all karma awards and bounty transfers.
-  - `showcases` — Submitted community developer projects.
-  - `showcase_votes` — Upvote records per user to prevent duplicate voting.
-  - `challenges` — Daily developer challenges with difficulty tiers and deadlines.
-  - `challenge_submissions` — Member challenge submissions with GitHub repos and demo links.
-  - `bounties` — Coding bounties with escrowed Dev Karma rewards and solver records.
-  - `top_developers` — Database view for server-wide leaderboard rankings.
+### `/ping`
+
+Check the bot's WebSocket latency.
+
+### `/server_info`
+
+View information about the current server, including:
+
+- Member count
+- Channel statistics
+- Server owner
+- Server information
+
+### `/user_info [member]`
+
+View information about a Discord member, including:
+
+- Account creation date
+- Server join date
+- Roles
+- Discord profile information
 
 ---
 
-## ⚙️ Setup & Installation
+## 🤖 GPT Developer Assistant
 
-### 1. Clone & Install Dependencies
+The bot also includes an AI-powered developer assistant through:
+
+`bot/cogs/gpt.py`
+
+The assistant is designed around developer questions and can help with topics such as:
+
+- Python
+- JavaScript
+- C++
+- Web development
+- Debugging
+- Git
+- GitHub
+- Programming concepts
+- Code explanations
+
+The AI assistant is intended to operate inside the configured Discord AI channel and uses the project's configured AI provider.
+
+---
+
+## 📖 Interactive Help
+
+### `/help`
+
+The bot includes an interactive help interface with category selection.
+
+Available categories:
+
+- 🛠️ Developer Tools
+- 🛡️ Moderation
+- ℹ️ General Utilities
+- 🌟 Community
+
+The help menu uses a Discord select menu so users can switch between command categories without sending additional commands.
+
+---
+
+# 🗄️ Database
+
+The bot uses **Supabase PostgreSQL** for persistent community data.
+
+The database layer is located inside:
+
+```text
+bot/database/
+├── client.py
+├── queries.py
+└── schema.sql
+```
+
+### Stored Data
+
+The database schema contains systems for:
+
+- Reputation / Dev Karma
+- Reputation audit logs
+- Showcase projects
+- Showcase votes
+- Developer challenges
+- Challenge submissions
+- Coding bounties
+- Bounty rewards
+- Developer leaderboard
+
+The schema uses Discord snowflake IDs as `BIGINT` values and includes indexes for commonly queried data.
+
+---
+
+# 📁 Project Structure
+
+```text
+The-Discord-bot/
+│
+├── app.py
+├── requirements.txt
+├── pytest.ini
+├── .env
+├── .env.example
+├── .gitignore
+├── LICENSE
+├── README.md
+│
+├── bot/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── config.py
+│   ├── main.py
+│   │
+│   ├── cogs/
+│   │   ├── __init__.py
+│   │   ├── bounty.py
+│   │   ├── challenge.py
+│   │   ├── community.py
+│   │   ├── dev_tools.py
+│   │   ├── general.py
+│   │   ├── gpt.py
+│   │   ├── help.py
+│   │   ├── moderation.py
+│   │   └── reputation.py
+│   │
+│   ├── database/
+│   │   ├── __init__.py
+│   │   ├── client.py
+│   │   ├── queries.py
+│   │   └── schema.sql
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── checks.py
+│       ├── http.py
+│       └── status.py
+│
+└── tests/
+```
+
+---
+
+# ⚙️ Requirements
+
+- Python **3.11+**
+- Discord bot application
+- Supabase project
+- Required API credentials for enabled external services
+
+Python dependencies are listed in:
+
+```text
+requirements.txt
+```
+
+---
+
+# 🔧 Installation
+
+## 1. Clone the repository
+
 ```bash
 git clone https://github.com/aridrochatterjee/The-Discord-bot.git
 cd The-Discord-bot
+```
+
+---
+
+## 2. Create a virtual environment
+
+### Windows
+
+```bash
+py -3.13 -m venv .venv
+.venv\Scripts\activate
+```
+
+### Linux / macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+---
+
+## 3. Install dependencies
+
+```bash
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables (`.env`)
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-Fill in your configuration:
+---
+
+# 🔐 Environment Configuration
+
+Create your local `.env` file from `.env.example`.
+
 ```env
-# [REQUIRED] Discord Bot Token
-# https://discord.com/developers/applications
-DISCORD_TOKEN="your_discord_bot_token_here"
+DISCORD_TOKEN="your_discord_bot_token"
 
-# [DATABASE] Supabase Configuration
-SUPABASE_URL="https://your-project-ref.supabase.co"
-SUPABASE_KEY="your_supabase_anon_or_service_role_key_here"
-
-# [CODE EXECUTION] Judge0 CE Configuration
-# Option A: RapidAPI Free Tier (50 free runs/day)
-# https://rapidapi.com/judge0-official/api/judge0-ce
-JUDGE0_URL="https://judge0-ce.p.rapidapi.com"
-RAPIDAPI_KEY="your_rapidapi_key_here"
-
-# Option B: Self-Hosted Judge0 via Docker (Free & Unlimited)
-# docker run -d -p 2358:2358 judge0/judge0
-# JUDGE0_URL="http://localhost:2358"
-# RAPIDAPI_KEY=""
+SUPABASE_URL="https://your-project.supabase.co"
+SUPABASE_KEY="your_supabase_key"
 ```
 
-### 3. Run Database Schema
-1. Open your project dashboard at [supabase.com](https://app.supabase.com).
-2. Navigate to **SQL Editor** -> **New query**.
-3. Paste the contents of [`bot/database/schema.sql`](bot/database/schema.sql) and click **Run**.
+Add any additional API credentials required by the enabled bot features to your `.env` file.
 
-### 4. Run the Bot
+### Important
+
+Never commit your `.env` file.
+
+The repository should contain:
+
+```text
+.env.example
+```
+
+but **not** your real:
+
+```text
+.env
+```
+
+---
+
+# 🗃️ Database Setup
+
+1. Create a project in Supabase.
+2. Open the Supabase dashboard.
+3. Go to **SQL Editor**.
+4. Create a new SQL query.
+5. Copy the contents of:
+
+```text
+bot/database/schema.sql
+```
+
+6. Run the SQL script.
+7. Add the resulting Supabase URL and key to `.env`.
+
+The bot uses the database for persistent reputation, challenges, showcases, bounties, and related community data.
+
+---
+
+# ▶️ Running the Bot
+
+Start the application with:
+
 ```bash
 python app.py
 ```
 
-### 5. Running Automated Tests
+If your environment uses the Python launcher:
+
+```bash
+py app.py
+```
+
+Once connected successfully, the bot will load its configured cogs and synchronize its hybrid commands.
+
+---
+
+# 🧪 Testing
+
+The project uses **pytest**.
+
+Run:
+
 ```bash
 pytest -v
 ```
-All **28 automated tests** will execute with 0 errors and 0 warnings:
+
+Tests are organized under:
+
 ```text
-============================= 28 passed in 0.50s ==============================
+tests/
+```
+
+The test suite covers important bot components such as:
+
+- Permission checks
+- Database operations
+- Developer tools
+- Help interface
+- Reputation
+- Challenges
+- Bounties
+- Community features
+
+> Test counts may change as the project evolves, so the README intentionally does not hard-code a specific number of passing tests.
+
+---
+
+# 🔒 Security
+
+This project handles Discord and database credentials, so keep secrets outside the repository.
+
+Never commit:
+
+```text
+.env
+```
+
+API keys, bot tokens, and Supabase credentials should always be stored in environment variables.
+
+If a secret is accidentally committed, rotate the credential immediately.
+
+---
+
+# 🧩 Architecture
+
+The bot is organized around Discord.py cogs.
+
+```text
+Discord
+   │
+   ▼
+app.py
+   │
+   ▼
+bot/main.py
+   │
+   ├── General
+   ├── Moderation
+   ├── Developer Tools
+   ├── GPT Assistant
+   ├── Community
+   ├── Reputation
+   ├── Challenges
+   ├── Bounties
+   └── Help
+          │
+          ▼
+     Database Layer
+          │
+          ▼
+     Supabase PostgreSQL
+```
+
+Shared HTTP functionality is handled through:
+
+```text
+bot/utils/http.py
+```
+
+Permission helpers are located in:
+
+```text
+bot/utils/checks.py
+```
+
+Bot presence/status functionality is handled through:
+
+```text
+bot/utils/status.py
 ```
 
 ---
 
-## 📁 Project Structure
+# 🛠️ Development
+
+When adding a new feature:
+
+1. Create or update the appropriate cog.
+2. Keep database operations inside `bot/database/queries.py`.
+3. Keep reusable permission logic inside `bot/utils/checks.py`.
+4. Keep external HTTP session handling inside `bot/utils/http.py`.
+5. Add tests for important behavior.
+6. Update the README when public commands change.
+
+### Example
+
+A new moderation command belongs in:
 
 ```text
-The-Discord-bot/
-├── app.py                      # Application entry point
-├── requirements.txt            # Dependencies (discord.py, supabase, aiohttp, etc.)
-├── pytest.ini                  # Pytest configuration (filters audioop deprecation)
-├── .env.example                # Environment variable configuration template
-├── README.md                   # Project documentation
-├── bot/
-│   ├── config.py               # Central environment variable parser
-│   ├── main.py                 # Bot client setup, view registration, error handlers
-│   ├── cogs/
-│   │   ├── general.py          # /ping, /server_info, /user_info
-│   │   ├── moderation.py       # /ban, /kick, /timeout, auto-defense filters
-│   │   ├── dev_tools.py        # /run (Judge0), /github, /pypi, /npm, /cheat
-│   │   ├── community.py        # /showcase, modal submissions, upvotes, threads
-│   │   ├── reputation.py       # /thank, /karma, /leaderboard (24h cooldown)
-│   │   ├── challenge.py        # /challenge post, submit, award, end, list
-│   │   ├── bounty.py           # /bounty create, list, accept, cancel
-│   │   └── help.py             # /help interactive category dropdown
-│   ├── database/
-│   │   ├── client.py           # Supabase async client initialization
-│   │   ├── queries.py          # Reputation, showcase, challenge & bounty queries
-│   │   └── schema.sql          # PostgreSQL DDL, tables, views, RLS policies
-│   └── utils/
-│       ├── checks.py           # is_admin_or_owner(), is_admin(), is_guild_owner()
-│       ├── http.py             # Shared aiohttp ClientSession manager
-│       └── status.py           # Rotating member count and developer quotes
-└── tests/
-    ├── test_checks.py          # Unit tests for permission decorators
-    ├── test_community.py       # Unit tests for showcase modal and upvotes
-    ├── test_database.py        # Unit tests for karma, thank cooldown, fallbacks
-    ├── test_dev_tools.py       # Unit tests for Judge0, github parsing, npm parsing
-    ├── test_help.py            # Unit tests for interactive help select options
-    ├── test_reputation.py      # Unit tests for karma tiers and progress bar
-    ├── test_challenge.py       # Unit tests for challenge modals, views, checks
-    └── test_bounty.py          # Unit tests for bounty modals, views, escrow guards
+bot/cogs/moderation.py
+```
+
+A new database operation belongs in:
+
+```text
+bot/database/queries.py
+```
+
+A new developer utility belongs in:
+
+```text
+bot/cogs/dev_tools.py
+```
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome.
+
+A typical contribution workflow is:
+
+```text
+Create branch
+    ↓
+Make changes
+    ↓
+Run tests
+    ↓
+Commit changes
+    ↓
+Push branch
+    ↓
+Open Pull Request
+    ↓
+Review
+    ↓
+Merge
+```
+
+Keep pull requests focused on one feature, bug fix, or improvement whenever possible.
+
+---
+
+# 📜 License
+
+This project is licensed under the terms specified in:
+
+```text
+LICENSE
+```
+
+---
+
+# ⚡ Horizon Devs
+
+Built for developers, by developers.
+
+**Code. Build. Learn. Help each other.**
 ```
