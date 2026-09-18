@@ -1,7 +1,4 @@
-
 from __future__ import annotations
-
-from datetime import datetime
 
 import discord
 from discord.ext import commands
@@ -112,7 +109,9 @@ class General(commands.Cog):
 
         embed.add_field(
             name="Verification",
-            value=str(guild.verification_level).replace("_", " ").title(),
+            value=str(
+                guild.verification_level
+            ).replace("_", " ").title(),
             inline=True,
         )
 
@@ -272,19 +271,31 @@ class General(commands.Cog):
 
         embed.add_field(
             name="PNG",
-            value=f"[Open]({user.display_avatar.replace(format='png').url})",
+            value=(
+                f"[Open]("
+                f"{user.display_avatar.replace(format='png').url}"
+                f")"
+            ),
             inline=True,
         )
 
         embed.add_field(
             name="JPG",
-            value=f"[Open]({user.display_avatar.replace(format='jpg').url})",
+            value=(
+                f"[Open]("
+                f"{user.display_avatar.replace(format='jpg').url}"
+                f")"
+            ),
             inline=True,
         )
 
         embed.add_field(
             name="WEBP",
-            value=f"[Open]({user.display_avatar.replace(format='webp').url})",
+            value=(
+                f"[Open]("
+                f"{user.display_avatar.replace(format='webp').url}"
+                f")"
+            ),
             inline=True,
         )
 
@@ -343,7 +354,9 @@ class General(commands.Cog):
             return
 
         if guild.icon is None:
-            await ctx.send("This server doesn't have an icon.")
+            await ctx.send(
+                "This server doesn't have an icon."
+            )
             return
 
         embed = discord.Embed(
@@ -364,7 +377,10 @@ class General(commands.Cog):
         description="Show the server banner.",
     )
     @commands.guild_only()
-    async def server_banner(self, ctx: commands.Context) -> None:
+    async def server_banner(
+        self,
+        ctx: commands.Context,
+    ) -> None:
         """Display the current server's banner."""
 
         guild = ctx.guild
@@ -373,7 +389,9 @@ class General(commands.Cog):
             return
 
         if guild.banner is None:
-            await ctx.send("This server doesn't have a banner.")
+            await ctx.send(
+                "This server doesn't have a banner."
+            )
             return
 
         embed = discord.Embed(
@@ -394,7 +412,10 @@ class General(commands.Cog):
         description="Show server member statistics.",
     )
     @commands.guild_only()
-    async def member_count(self, ctx: commands.Context) -> None:
+    async def member_count(
+        self,
+        ctx: commands.Context,
+    ) -> None:
         """Display member statistics."""
 
         guild = ctx.guild
@@ -405,8 +426,16 @@ class General(commands.Cog):
         members = guild.members
 
         total = len(members)
-        humans = sum(not member.bot for member in members)
-        bots = sum(member.bot for member in members)
+
+        humans = sum(
+            not member.bot
+            for member in members
+        )
+
+        bots = sum(
+            member.bot
+            for member in members
+        )
 
         online = sum(
             member.status != discord.Status.offline
@@ -460,10 +489,15 @@ class General(commands.Cog):
     ) -> None:
         """Display information about a role."""
 
+        role_color = (
+            role.color
+            if role.color != discord.Color.default()
+            else discord.Color.blurple()
+        )
+
         embed = discord.Embed(
             title=role.name,
-            color=role.color if role.color != discord.Color.default()
-            else discord.Color.blurple(),
+            color=role_color,
         )
 
         embed.add_field(
@@ -536,8 +570,13 @@ class General(commands.Cog):
         if channel is None:
             channel = ctx.channel
 
-        if not isinstance(channel, discord.abc.GuildChannel):
-            await ctx.send("That isn't a valid server channel.")
+        if not isinstance(
+            channel,
+            discord.abc.GuildChannel,
+        ):
+            await ctx.send(
+                "That isn't a valid server channel."
+            )
             return
 
         embed = discord.Embed(
@@ -553,7 +592,9 @@ class General(commands.Cog):
 
         embed.add_field(
             name="Type",
-            value=str(channel.type).replace("_", " ").title(),
+            value=str(
+                channel.type
+            ).replace("_", " ").title(),
             inline=True,
         )
 
@@ -593,7 +634,10 @@ class General(commands.Cog):
         name="bot_info",
         description="Show information about the bot.",
     )
-    async def bot_info(self, ctx: commands.Context) -> None:
+    async def bot_information(
+        self,
+        ctx: commands.Context,
+    ) -> None:
         """Display information about the bot."""
 
         user = self.bot.user
@@ -607,7 +651,9 @@ class General(commands.Cog):
             color=discord.Color.blurple(),
         )
 
-        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.set_thumbnail(
+            url=user.display_avatar.url,
+        )
 
         embed.add_field(
             name="Username",
@@ -667,9 +713,13 @@ class General(commands.Cog):
         """Decode a Discord snowflake ID."""
 
         try:
-            timestamp = discord.utils.snowflake_time(snowflake_id)
+            timestamp = discord.utils.snowflake_time(
+                snowflake_id
+            )
         except (ValueError, OverflowError):
-            await ctx.send("That doesn't look like a valid Discord ID.")
+            await ctx.send(
+                "That doesn't look like a valid Discord ID."
+            )
             return
 
         embed = discord.Embed(
@@ -712,8 +762,12 @@ class General(commands.Cog):
         description="Make the bot send a message.",
     )
     @commands.guild_only()
-    @commands.has_permissions(manage_messages=True)
-    @commands.bot_has_permissions(send_messages=True)
+    @commands.has_permissions(
+        manage_messages=True
+    )
+    @commands.bot_has_permissions(
+        send_messages=True
+    )
     async def say(
         self,
         ctx: commands.Context,
@@ -723,39 +777,29 @@ class General(commands.Cog):
         """Send a message as the bot."""
 
         if not message.strip():
-            await ctx.send("You need to provide a message.")
+            await ctx.send(
+                "You need to provide a message."
+            )
             return
 
         # Prevent accidental mass mentions.
-        message = discord.utils.escape_mentions(message)
+        message = discord.utils.escape_mentions(
+            message
+        )
 
         await ctx.send(message)
 
-        # Delete the original prefix command message when possible.
+        # Delete the original prefix command message
+        # when possible.
         if ctx.message:
             try:
                 await ctx.message.delete()
             except discord.HTTPException:
                 pass
 
-
     # ============================================================
     # ERROR HANDLER
     # ============================================================
-
-    @ping.error
-    async def ping_error(
-        self,
-        ctx: commands.Context,
-        error: commands.CommandError,
-    ) -> None:
-        """Handle ping command errors."""
-
-        if isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(
-                f"Slow down. Try again in "
-                f"**{error.retry_after:.1f}s**."
-            )
 
     @say.error
     async def say_error(
@@ -765,13 +809,22 @@ class General(commands.Cog):
     ) -> None:
         """Handle /say permission errors."""
 
-        if isinstance(error, commands.MissingPermissions):
+        if isinstance(
+            error,
+            commands.MissingPermissions,
+        ):
             await ctx.send(
-                "You need **Manage Messages** to use this command."
+                "You need **Manage Messages** "
+                "to use this command."
             )
-        elif isinstance(error, commands.BotMissingPermissions):
+
+        elif isinstance(
+            error,
+            commands.BotMissingPermissions,
+        ):
             await ctx.send(
-                "I don't have permission to send messages here."
+                "I don't have permission to send "
+                "messages here."
             )
 
     # ============================================================
@@ -785,37 +838,99 @@ class General(commands.Cog):
     ) -> None:
         """Handle errors for commands in this cog."""
 
-        if isinstance(error, commands.CommandNotFound):
+        if isinstance(
+            error,
+            commands.CommandNotFound,
+        ):
             return
 
-        if isinstance(error, commands.MissingRequiredArgument):
+        if isinstance(
+            error,
+            commands.CommandOnCooldown,
+        ):
             await ctx.send(
-                f"Missing argument: `{error.param.name}`."
+                f"Slow down. Try again in "
+                f"**{error.retry_after:.1f}s**."
             )
             return
 
-        if isinstance(error, commands.MemberNotFound):
-            await ctx.send("I couldn't find that member.")
-            return
-
-        if isinstance(error, commands.RoleNotFound):
-            await ctx.send("I couldn't find that role.")
-            return
-
-        if isinstance(error, commands.ChannelNotFound):
-            await ctx.send("I couldn't find that channel.")
-            return
-
-        if isinstance(error, commands.BadArgument):
+        if isinstance(
+            error,
+            commands.MissingRequiredArgument,
+        ):
             await ctx.send(
-                "One of the arguments you provided is invalid."
+                f"Missing argument: "
+                f"`{error.param.name}`."
+            )
+            return
+
+        if isinstance(
+            error,
+            commands.MemberNotFound,
+        ):
+            await ctx.send(
+                "I couldn't find that member."
+            )
+            return
+
+        if isinstance(
+            error,
+            commands.RoleNotFound,
+        ):
+            await ctx.send(
+                "I couldn't find that role."
+            )
+            return
+
+        if isinstance(
+            error,
+            commands.ChannelNotFound,
+        ):
+            await ctx.send(
+                "I couldn't find that channel."
+            )
+            return
+
+        if isinstance(
+            error,
+            commands.BadArgument,
+        ):
+            await ctx.send(
+                "One of the arguments you provided "
+                "is invalid."
+            )
+            return
+
+        if isinstance(
+            error,
+            commands.MissingPermissions,
+        ):
+            await ctx.send(
+                "You don't have permission "
+                "to use this command."
+            )
+            return
+
+        if isinstance(
+            error,
+            commands.BotMissingPermissions,
+        ):
+            await ctx.send(
+                "I don't have the permissions "
+                "I need to do that."
             )
             return
 
         raise error
 
 
+# ================================================================
+# COG SETUP
+# ================================================================
+
 async def setup(bot: commands.Bot) -> None:
     """Load the General cog."""
 
-    await bot.add_cog(General(bot))
+    await bot.add_cog(
+        General(bot)
+    )
