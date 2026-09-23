@@ -296,7 +296,7 @@ CREATE TABLE IF NOT EXISTS challenge_submissions (
 
     user_id BIGINT NOT NULL,
 
-    github_url TEXT NOT NULL,
+    github_url TEXT,
 
     demo_url TEXT,
 
