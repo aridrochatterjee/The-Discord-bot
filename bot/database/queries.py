@@ -2885,6 +2885,167 @@ async def delete_member_profile(
     return bool(response.data)
 
 
+async def record_moderation_case(
+    guild_id: int,
+    user_id: int,
+    moderator_id: int,
+    action: str,
+    reason: str = "No reason provided.",
+    duration: Optional[str] = None,
+) -> bool:
+    """Save a successful moderation action to the case history."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("moderation_cases")
+            .insert({
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "moderator_id": moderator_id,
+                "action": action,
+                "reason": reason,
+                "duration": duration,
+            })
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def get_moderation_cases(
+    guild_id: int,
+    user_id: int,
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """Fetch a member's most recent recorded moderation cases."""
+    supabase = get_supabase()
+    if not supabase:
+        return []
+
+    limit = max(1, min(limit, 50))
+
+    try:
+        result = await (
+            supabase.table("moderation_cases")
+            .select("*")
+            .eq("guild_id", guild_id)
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception:
+        return []
+
+
+async def get_member_profile(
+    guild_id: int,
+    user_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Get staff-written profile notes for a member in a guild."""
+    supabase = get_supabase()
+    if not supabase:
+        return None
+
+    try:
+        result = await (
+            supabase.table("member_profiles")
+            .select("*")
+            .eq("guild_id", guild_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception:
+        return None
+
+
+async def set_member_profile(
+    guild_id: int,
+    user_id: int,
+    bio: str,
+    updated_by: int,
+) -> bool:
+    """Create or update staff-written profile notes."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("member_profiles")
+            .upsert(
+                {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "bio": bio,
+                    "updated_by": updated_by,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="guild_id,user_id",
+            )
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def remove_member_profile(
+    guild_id: int,
+    user_id: int,
+) -> bool:
+    """Delete a member's staff-written profile notes."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("member_profiles")
+            .delete()
+            .eq("guild_id", guild_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def record_member_first_seen(
+    guild_id: int,
+    user_id: int,
+) -> bool:
+    """Record first observation without overwriting the original timestamp."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("member_first_seen")
+            .upsert(
+                {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                },
+                on_conflict="guild_id,user_id",
+                ignore_duplicates=True,
+            )
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
 
 
 async def accept_bounty(

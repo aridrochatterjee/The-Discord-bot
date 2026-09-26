@@ -1,228 +1,500 @@
+"""Staff member lookup, profile notes, and moderation history."""
+
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import datetime
+from typing import Any
 
 import discord
-from discord import app_commands
 from discord.ext import commands
 
 from bot.database.queries import (
-    delete_member_profile,
     get_member_profile,
-    upsert_member_profile,
+    get_moderation_cases,
+    remove_member_profile,
+    set_member_profile,
 )
 
-logger = logging.getLogger("bot.member_profiles")
+logger = logging.getLogger(__name__)
+
+PROFILE_TEXT_LIMIT = 1000
+HISTORY_LIMIT = 10
 
 
-class MemberProfiles(commands.Cog):
-    """Staff-only saved profiles for community members."""
-
-    profile = app_commands.Group(
-        name="profile",
-        description="Manage saved member profiles.",
-        default_permissions=discord.Permissions(manage_guild=True),
-        guild_only=True,
-    )
+class MemberProfile(commands.Cog):
+    """Staff-only member information and profile management."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
+    # --------------------------------------------------------
+    # Permissions and responses
+    # --------------------------------------------------------
+
     @staticmethod
-    async def _is_staff(interaction: discord.Interaction) -> bool:
-        """Runtime permission check; command visibility alone is not security."""
-        if not isinstance(interaction.user, discord.Member):
-            await interaction.response.send_message(
-                "This command can only be used in a server.",
-                ephemeral=True,
+    def is_staff(member: discord.Member) -> bool:
+        """Require Manage Server or Administrator permission."""
+        permissions = member.guild_permissions
+        return permissions.manage_guild or permissions.administrator
+
+    async def require_staff(self, ctx: commands.Context) -> bool:
+        if ctx.guild is None or not isinstance(ctx.author, discord.Member):
+            await self.send_embed(
+                ctx,
+                "Server Only",
+                "These commands can only be used inside a server.",
+                discord.Color.red(),
             )
             return False
 
-        if not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message(
-                "You need the **Manage Server** permission to use this command.",
-                ephemeral=True,
+        if not self.is_staff(ctx.author):
+            await self.send_embed(
+                ctx,
+                "Permission Denied",
+                "You need **Manage Server** permission to use this command.",
+                discord.Color.red(),
             )
             return False
 
         return True
 
-    @app_commands.command(
-        name="lookup",
-        description="Look up a saved member profile by Discord ID.",
+    async def defer_private(self, ctx: commands.Context) -> None:
+        """Defer slash commands privately; prefix commands need no defer."""
+        if ctx.interaction and not ctx.interaction.response.is_done():
+            await ctx.interaction.response.defer(ephemeral=True)
+
+    async def send_embed(
+        self,
+        ctx: commands.Context,
+        title: str,
+        description: str,
+        color: discord.Color = discord.Color.blurple(),
+    ) -> None:
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.set_footer(text=f"{ctx.guild.name if ctx.guild else 'Member tools'}")
+
+        try:
+            if ctx.interaction:
+                if ctx.interaction.response.is_done():
+                    await ctx.interaction.followup.send(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+                else:
+                    await ctx.interaction.response.send_message(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+            else:
+                await ctx.send(embed=embed)
+        except discord.HTTPException:
+            logger.exception("Could not send member-profile response.")
+
+    # --------------------------------------------------------
+    # Formatting
+    # --------------------------------------------------------
+
+    @staticmethod
+    def discord_timestamp(value: datetime | None) -> str:
+        if value is None:
+            return "Unavailable"
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=discord.utils.utcnow().tzinfo)
+        return discord.utils.format_dt(value, style="F")
+
+    @staticmethod
+    def clip(value: Any, limit: int = 1000) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "Not provided"
+        if len(text) > limit:
+            return text[: limit - 3] + "..."
+        return text
+
+    @staticmethod
+    def get_member_label(guild: discord.Guild, user_id: int) -> str:
+        member = guild.get_member(user_id)
+        if member:
+            return f"{member.mention} (`{member.id}`)"
+        return f"User ID: `{user_id}`"
+
+    # --------------------------------------------------------
+    # Command group
+    # --------------------------------------------------------
+
+    @commands.hybrid_group(
+        name="member",
+        description="Staff member lookup, profiles, and history.",
+        invoke_without_command=True,
     )
-    @app_commands.guild_only()
-    @app_commands.default_permissions(
-        manage_guild=True,
+    async def member(self, ctx: commands.Context) -> None:
+        """Show available staff member commands."""
+        if not await self.require_staff(ctx):
+            return
+
+        await self.send_embed(
+            ctx,
+            "Member Staff Tools",
+            (
+                "`/member lookup <member>` — view a member's server information\n"
+                "`/member profile set <member> <bio> [notes]` — save staff profile details\n"
+                "`/member profile remove <member>` — remove saved profile details\n"
+                "`/member history <member>` — view bot-recorded moderation history"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # Member lookup
+    # --------------------------------------------------------
+
+    @member.command(
+        name="lookup",
+        description="View a member's Discord and server information.",
     )
     async def lookup(
         self,
-        interaction: discord.Interaction,
-        discord_id: str,
+        ctx: commands.Context,
+        member: discord.Member,
     ) -> None:
-        if not await self._is_staff(interaction):
+        """Display the member's current details and staff profile."""
+        if not await self.require_staff(ctx):
             return
 
-        try:
-            target_id = int(discord_id.strip())
-            if target_id <= 0:
-                raise ValueError
-        except (ValueError, AttributeError):
-            await interaction.response.send_message(
-                "Enter a valid numeric Discord ID.",
-                ephemeral=True,
-            )
-            return
+        await self.defer_private(ctx)
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = ctx.guild
+        if guild is None:
+            return
 
         try:
             profile = await get_member_profile(
-                interaction.guild_id,
-                target_id,
+                guild_id=guild.id,
+                user_id=member.id,
             )
         except Exception:
-            logger.exception("Profile lookup failed.")
-            await interaction.followup.send(
-                "The profile database could not be reached. Please try again later.",
-                ephemeral=True,
-            )
-            return
+            logger.exception("Failed to load profile for user %s", member.id)
+            profile = None
 
-        if profile is None:
-            await interaction.followup.send(
-                f"No saved profile was found for Discord ID `{target_id}`.",
-                ephemeral=True,
-            )
-            return
+        created = self.discord_timestamp(member.created_at)
+        joined = self.discord_timestamp(member.joined_at)
 
-        try:
-            user = self.bot.get_user(target_id) or await self.bot.fetch_user(target_id)
-            username = f"{user.name} ({user.display_name})"
-        except (discord.NotFound, discord.HTTPException):
-            username = "Unknown Discord user"
+        roles = [
+            role.mention
+            for role in reversed(member.roles)
+            if role != guild.default_role
+        ]
+        roles_text = ", ".join(roles) if roles else "No assigned roles"
 
         embed = discord.Embed(
-            title="Member profile",
+            title="Member Overview",
             color=discord.Color.blurple(),
+            timestamp=discord.utils.utcnow(),
         )
-        embed.add_field(name="Username", value=username, inline=False)
-        embed.add_field(name="Discord ID", value=str(target_id), inline=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+
         embed.add_field(
-            name="Joined",
-            value=profile.get("joined_date") or "Not recorded",
-            inline=True,
-        )
-        embed.add_field(
-            name="About",
-            value=profile.get("bio") or "No bio saved.",
+            name="Identity",
+            value=(
+                f"**Display name:** {discord.utils.escape_markdown(member.display_name)}\n"
+                f"**Username:** `{member.name}`\n"
+                f"**User ID:** `{member.id}`"
+            ),
             inline=False,
         )
-        embed.set_footer(text=f"Guild ID: {interaction.guild_id}")
+        embed.add_field(
+            name="Discord Account",
+            value=f"**Created:** {created}",
+            inline=False,
+        )
+        embed.add_field(
+            name="This Server",
+            value=(
+                f"**Joined:** {joined}\n"
+                f"**Nickname:** {member.nick or 'None'}\n"
+                f"**Boosting:** {'Yes' if member.premium_since else 'No'}\n"
+                f"**Roles:** {roles_text}"
+            ),
+            inline=False,
+        )
 
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        bio = profile.get("bio") if isinstance(profile, dict) else None
+        notes = profile.get("notes") if isinstance(profile, dict) else None
+
+        embed.add_field(
+            name="Staff Profile",
+            value=f"**Bio:** {self.clip(bio)}\n**Staff notes:** {self.clip(notes)}",
+            inline=False,
+        )
+
+        embed.set_footer(text=f"Requested by {ctx.author}")
+        await self.send_existing_embed(ctx, embed)
+
+    # --------------------------------------------------------
+    # Profile subgroup
+    # --------------------------------------------------------
+
+    @member.group(
+        name="profile",
+        description="Manage staff-entered member profile information.",
+        invoke_without_command=True,
+    )
+    async def profile(self, ctx: commands.Context) -> None:
+        if not await self.require_staff(ctx):
+            return
+
+        await self.send_embed(
+            ctx,
+            "Member Profile",
+            (
+                "`/member profile set <member> <bio> [notes]`\n"
+                "`/member profile remove <member>`"
+            ),
+        )
 
     @profile.command(
         name="set",
-        description="Add or update a member's saved profile.",
+        description="Save a staff bio and notes for a member.",
     )
-    async def set_profile(
+    async def profile_set(
         self,
-        interaction: discord.Interaction,
+        ctx: commands.Context,
         member: discord.Member,
-        joined_date: str,
         bio: str,
+        *,
+        notes: str = "",
     ) -> None:
-        if not await self._is_staff(interaction):
+        """Create or update a member's staff-entered profile."""
+        if not await self.require_staff(ctx):
             return
 
-        try:
-            parsed_date = date.fromisoformat(joined_date.strip())
-        except ValueError:
-            await interaction.response.send_message(
-                "Use the date format `YYYY-MM-DD`, for example `2023-01-01`.",
-                ephemeral=True,
-            )
-            return
+        await self.defer_private(ctx)
 
         bio = bio.strip()
+        notes = notes.strip()
+
         if not bio:
-            await interaction.response.send_message(
-                "The bio cannot be empty.",
-                ephemeral=True,
+            await self.send_embed(
+                ctx,
+                "Invalid Bio",
+                "Please provide a non-empty bio.",
+                discord.Color.red(),
             )
             return
 
-        if len(bio) > 1000:
-            await interaction.response.send_message(
-                "Keep the bio to 1,000 characters or fewer.",
-                ephemeral=True,
+        if len(bio) > PROFILE_TEXT_LIMIT or len(notes) > PROFILE_TEXT_LIMIT:
+            await self.send_embed(
+                ctx,
+                "Text Too Long",
+                f"Bio and notes must each be {PROFILE_TEXT_LIMIT} characters or fewer.",
+                discord.Color.red(),
             )
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild = ctx.guild
+        if guild is None:
+            return
 
         try:
-            await upsert_member_profile(
-                guild_id=interaction.guild_id,
-                discord_id=member.id,
-                joined_date=parsed_date.isoformat(),
+            saved = await set_member_profile(
+                guild_id=guild.id,
+                user_id=member.id,
                 bio=bio,
-                staff_id=interaction.user.id,
+                notes=notes,
+                updated_by=ctx.author.id,
             )
         except Exception:
-            logger.exception("Saving member profile failed.")
-            await interaction.followup.send(
-                "Could not save the profile. Check the bot logs and Supabase setup.",
-                ephemeral=True,
+            logger.exception("Failed to save profile for user %s", member.id)
+            saved = False
+
+        if not saved:
+            await self.send_embed(
+                ctx,
+                "Profile Not Saved",
+                "The profile could not be saved. Check the database connection and table setup.",
+                discord.Color.red(),
             )
             return
 
-        await interaction.followup.send(
-            f"Saved the profile for {member.mention}.",
-            ephemeral=True,
+        await self.send_embed(
+            ctx,
+            "Profile Saved",
+            f"Updated the staff profile for {member.mention}.",
+            discord.Color.green(),
         )
 
     @profile.command(
         name="remove",
-        description="Remove a member's saved profile.",
+        description="Remove a member's saved staff profile.",
     )
-    async def remove_profile(
+    async def profile_remove(
         self,
-        interaction: discord.Interaction,
+        ctx: commands.Context,
         member: discord.Member,
     ) -> None:
-        if not await self._is_staff(interaction):
+        """Delete the saved staff bio and notes for a member."""
+        if not await self.require_staff(ctx):
             return
 
-        await interaction.response.defer(ephemeral=True, thinking=True)
+        await self.defer_private(ctx)
+
+        guild = ctx.guild
+        if guild is None:
+            return
 
         try:
-            deleted = await delete_member_profile(
-                guild_id=interaction.guild_id,
-                discord_id=member.id,
+            removed = await remove_member_profile(
+                guild_id=guild.id,
+                user_id=member.id,
             )
         except Exception:
-            logger.exception("Removing member profile failed.")
-            await interaction.followup.send(
-                "Could not remove the profile. Check the bot logs and Supabase setup.",
-                ephemeral=True,
+            logger.exception("Failed to remove profile for user %s", member.id)
+            removed = False
+
+        if not removed:
+            await self.send_embed(
+                ctx,
+                "Profile Not Removed",
+                "No profile was removed. It may not exist, or the database operation failed.",
+                discord.Color.orange(),
             )
             return
 
-        if not deleted:
-            await interaction.followup.send(
-                f"No saved profile exists for {member.mention}.",
-                ephemeral=True,
-            )
-            return
-
-        await interaction.followup.send(
-            f"Removed the saved profile for {member.mention}.",
-            ephemeral=True,
+        await self.send_embed(
+            ctx,
+            "Profile Removed",
+            f"Removed the saved staff profile for {member.mention}.",
+            discord.Color.green(),
         )
+
+    # --------------------------------------------------------
+    # Moderation history
+    # --------------------------------------------------------
+
+    @member.command(
+        name="history",
+        description="View bot-recorded moderation actions for a member.",
+    )
+    async def history(
+        self,
+        ctx: commands.Context,
+        member: discord.Member,
+    ) -> None:
+        """Show recent moderation cases stored by this bot."""
+        if not await self.require_staff(ctx):
+            return
+
+        await self.defer_private(ctx)
+
+        guild = ctx.guild
+        if guild is None:
+            return
+
+        try:
+            cases = await get_moderation_cases(
+                guild_id=guild.id,
+                user_id=member.id,
+            )
+        except Exception:
+            logger.exception("Failed to load history for user %s", member.id)
+            await self.send_embed(
+                ctx,
+                "History Unavailable",
+                "Could not retrieve moderation history from the database.",
+                discord.Color.red(),
+            )
+            return
+
+        if not cases:
+            await self.send_embed(
+                ctx,
+                "Moderation History",
+                (
+                    f"No bot-recorded moderation cases were found for {member.mention}.\n\n"
+                    "This does not confirm whether the member has ever been moderated "
+                    "outside this bot or before history logging was enabled."
+                ),
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"Moderation History — {member}",
+            description=f"Showing up to the {HISTORY_LIMIT} most recent recorded cases.",
+            color=discord.Color.orange(),
+            timestamp=discord.utils.utcnow(),
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
+        for index, case in enumerate(cases[:HISTORY_LIMIT], start=1):
+            action = self.clip(case.get("action"), 100)
+            reason = self.clip(case.get("reason"), 500)
+            moderator_id = case.get("moderator_id")
+            created_at = case.get("created_at")
+
+            try:
+                moderator_id_int = int(moderator_id)
+                moderator_label = self.get_member_label(
+                    guild,
+                    moderator_id_int,
+                )
+            except (TypeError, ValueError):
+                moderator_label = "Unavailable"
+
+            if isinstance(created_at, str):
+                try:
+                    parsed_date = datetime.fromisoformat(
+                        created_at.replace("Z", "+00:00")
+                    )
+                    date_label = self.discord_timestamp(parsed_date)
+                except ValueError:
+                    date_label = created_at
+            elif isinstance(created_at, datetime):
+                date_label = self.discord_timestamp(created_at)
+            else:
+                date_label = "Date unavailable"
+
+            embed.add_field(
+                name=f"{index}. {action}",
+                value=(
+                    f"**When:** {date_label}\n"
+                    f"**Moderator:** {moderator_label}\n"
+                    f"**Reason:** {reason}"
+                ),
+                inline=False,
+            )
+
+        embed.set_footer(text=f"Member ID: {member.id}")
+        await self.send_existing_embed(ctx, embed)
+
+    async def send_existing_embed(
+        self,
+        ctx: commands.Context,
+        embed: discord.Embed,
+    ) -> None:
+        """Send an already-built embed privately for slash usage."""
+        try:
+            if ctx.interaction:
+                if ctx.interaction.response.is_done():
+                    await ctx.interaction.followup.send(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+                else:
+                    await ctx.interaction.response.send_message(
+                        embed=embed,
+                        ephemeral=True,
+                    )
+            else:
+                await ctx.send(embed=embed)
+        except discord.HTTPException:
+            logger.exception("Could not send member-profile embed.")
 
 
 async def setup(bot: commands.Bot) -> None:
-    await bot.add_cog(MemberProfiles(bot))
+    """Load the member profile cog."""
+    await bot.add_cog(MemberProfile(bot))

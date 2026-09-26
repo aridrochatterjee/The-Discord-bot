@@ -2,10 +2,6 @@
 
 Hybrid commands support both slash and prefix usage.
 
-Examples:
-    /ban @member Spam
-    !ban @member Spam
-
 Commands:
     ban
     unban <user_id>
@@ -18,14 +14,12 @@ Commands:
 Automatic filtering:
     - Discord invite links
     - Configured adult website domains
-
-Successful moderation actions stay in the channel.
-Errors and automatic-filter warnings disappear after DELETE_AFTER seconds.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Awaitable, Callable
@@ -34,22 +28,18 @@ from zoneinfo import ZoneInfo
 import discord
 from discord.ext import commands
 
+from bot.database.queries import record_moderation_case
+
+
+logger = logging.getLogger(__name__)
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
-# How long temporary error/warning embeds remain visible.
 DELETE_AFTER = 5
-
-# Maximum number of messages /purge or !purge can delete.
 MAX_PURGE = 100
-
-# Discord's maximum timeout duration.
 MAX_TIMEOUT = timedelta(days=28)
-
-# Regional timezone used in moderation embeds.
-# CommunityOS can later make this configurable per server.
 TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
@@ -57,7 +47,6 @@ TIMEZONE = ZoneInfo("Asia/Kolkata")
 # LINK FILTERING
 # ============================================================
 
-# Discord invite links.
 INVITE_RE = re.compile(
     r"(?:https?://)?(?:www\.)?"
     r"(?:discord\.gg|discord\.com/invite|discordapp\.com/invite)"
@@ -65,8 +54,6 @@ INVITE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Known adult domains.
-# Add/remove domains here when needed.
 ADULT_DOMAINS = (
     "pornhub.com",
     "xvideos.com",
@@ -81,7 +68,7 @@ ADULT_DOMAINS = (
 
 
 class Moderation(commands.Cog):
-    """CommunityOS moderation commands and automatic filtering."""
+    """Moderation commands and automatic filtering."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -93,7 +80,6 @@ class Moderation(commands.Cog):
     @staticmethod
     def now() -> datetime:
         """Return the current configured regional time."""
-
         return datetime.now(TIMEZONE)
 
     def embed(
@@ -103,7 +89,6 @@ class Moderation(commands.Cog):
         color: discord.Color = discord.Color.blurple(),
     ) -> discord.Embed:
         """Create a consistent embed."""
-
         now = self.now()
 
         embed = discord.Embed(
@@ -116,16 +101,10 @@ class Moderation(commands.Cog):
         embed.set_footer(
             text=f"• {now.strftime('%d %b %Y • %I:%M %p %Z')}"
         )
-
         return embed
 
     async def defer(self, ctx: commands.Context) -> None:
-        """
-        Acknowledge slash commands before longer operations.
-
-        Prefix commands don't require deferring.
-        """
-
+        """Acknowledge slash commands before longer operations."""
         interaction = ctx.interaction
 
         if interaction and not interaction.response.is_done():
@@ -140,15 +119,7 @@ class Moderation(commands.Cog):
         *,
         temporary: bool = False,
     ) -> None:
-        """
-        Send a response.
-
-        Successful moderation actions remain permanently.
-
-        Errors and warnings become temporary when:
-            temporary=True
-        """
-
+        """Send a response, optionally deleting temporary messages."""
         embed = self.embed(title, description, color)
 
         try:
@@ -159,7 +130,6 @@ class Moderation(commands.Cog):
                 )
             else:
                 message = await ctx.send(embed=embed)
-
         except discord.HTTPException:
             return
 
@@ -178,7 +148,6 @@ class Moderation(commands.Cog):
         description: str,
     ) -> None:
         """Send a temporary error embed."""
-
         await self.respond(
             ctx,
             title,
@@ -196,17 +165,7 @@ class Moderation(commands.Cog):
         moderator: discord.Member,
         target: discord.Member,
     ) -> bool:
-        """
-        Check Discord's moderation hierarchy.
-
-        A moderator cannot:
-            - Moderate themselves.
-            - Moderate the server owner.
-            - Moderate someone with an equal/higher role.
-
-        The server owner can moderate everyone except themselves.
-        """
-
+        """Check Discord's moderation hierarchy."""
         guild = moderator.guild
 
         if moderator.id == target.id:
@@ -226,8 +185,7 @@ class Moderation(commands.Cog):
         target: discord.Member,
         permission: str,
     ) -> bool:
-        """Validate moderator permission, bot permission and hierarchy."""
-
+        """Validate moderator permission, bot permissions and hierarchy."""
         if ctx.guild is None:
             await self.error(
                 ctx,
@@ -241,12 +199,7 @@ class Moderation(commands.Cog):
 
         bot_member = ctx.guild.me
 
-        # Moderator permission.
-        if not getattr(
-            ctx.author.guild_permissions,
-            permission,
-            False,
-        ):
+        if not getattr(ctx.author.guild_permissions, permission, False):
             await self.error(
                 ctx,
                 "Permission Denied",
@@ -254,14 +207,9 @@ class Moderation(commands.Cog):
             )
             return False
 
-        # Bot permission.
         if (
             bot_member is None
-            or not getattr(
-                bot_member.guild_permissions,
-                permission,
-                False,
-            )
+            or not getattr(bot_member.guild_permissions, permission, False)
         ):
             await self.error(
                 ctx,
@@ -270,7 +218,6 @@ class Moderation(commands.Cog):
             )
             return False
 
-        # Role hierarchy.
         if not self.can_moderate(ctx.author, target):
             await self.error(
                 ctx,
@@ -287,15 +234,7 @@ class Moderation(commands.Cog):
 
     @staticmethod
     def parse_duration(duration: str) -> timedelta | None:
-        """
-        Parse timeout durations.
-
-        Supported examples:
-            10m
-            2h
-            7d
-        """
-
+        """Parse timeout durations such as 10m, 2h or 7d."""
         match = re.fullmatch(
             r"(\d+)([mhd])",
             duration.lower().strip(),
@@ -314,6 +253,36 @@ class Moderation(commands.Cog):
         }[unit]
 
     # ========================================================
+    # MODERATION HISTORY
+    # ========================================================
+
+    async def record_case(
+        self,
+        *,
+        guild_id: int,
+        user_id: int,
+        moderator_id: int,
+        action: str,
+        reason: str,
+    ) -> None:
+        """Save a completed moderation action without interrupting it."""
+        try:
+            await record_moderation_case(
+                guild_id=guild_id,
+                user_id=user_id,
+                moderator_id=moderator_id,
+                action=action,
+                reason=reason,
+            )
+        except Exception:
+            logger.exception(
+                "Could not save moderation case: guild=%s user=%s action=%s",
+                guild_id,
+                user_id,
+                action,
+            )
+
+    # ========================================================
     # MODERATION ACTION HELPERS
     # ========================================================
 
@@ -325,13 +294,7 @@ class Moderation(commands.Cog):
         reason: str,
         extra: str = "",
     ) -> None:
-        """
-        DM the moderated user.
-
-        DM failures do not cancel the moderation action because users
-        may have direct messages disabled.
-        """
-
+        """DM the moderated user. DM failures do not cancel the action."""
         now = self.now()
 
         description = (
@@ -354,7 +317,6 @@ class Moderation(commands.Cog):
                     discord.Color.orange(),
                 )
             )
-
         except (discord.Forbidden, discord.HTTPException):
             pass
 
@@ -369,19 +331,7 @@ class Moderation(commands.Cog):
         callback: Callable[[], Awaitable[None]],
         extra: str = "",
     ) -> None:
-        """
-        Run a standard moderation action.
-
-        Handles:
-            - Slash interaction acknowledgement
-            - Permission validation
-            - Bot permissions
-            - Role hierarchy
-            - Discord API errors
-            - DM notifications
-            - Permanent action embed
-        """
-
+        """Run a moderation action and record it after Discord succeeds."""
         await self.defer(ctx)
 
         if not await self.validate(ctx, member, permission):
@@ -394,7 +344,6 @@ class Moderation(commands.Cog):
 
         try:
             await callback()
-
         except discord.Forbidden:
             await self.error(
                 ctx,
@@ -402,7 +351,6 @@ class Moderation(commands.Cog):
                 "I don't have permission or my role is too low.",
             )
             return
-
         except discord.HTTPException:
             await self.error(
                 ctx,
@@ -411,7 +359,16 @@ class Moderation(commands.Cog):
             )
             return
 
-        # Only notify the member after the action successfully completes.
+        # The action succeeded. Save its history before responding.
+        if ctx.guild is not None:
+            await self.record_case(
+                guild_id=ctx.guild.id,
+                user_id=member.id,
+                moderator_id=moderator.id,
+                action=action,
+                reason=reason,
+            )
+
         await self.notify_member(
             member,
             moderator,
@@ -421,7 +378,6 @@ class Moderation(commands.Cog):
         )
 
         now = self.now()
-
         description = (
             f"**Member:** {member.mention}\n"
             f"**Action taken by:** {moderator.mention}\n"
@@ -456,7 +412,6 @@ class Moderation(commands.Cog):
         reason: str = "No reason provided.",
     ) -> None:
         """Ban a member."""
-
         await self.run_action(
             ctx,
             member,
@@ -482,7 +437,6 @@ class Moderation(commands.Cog):
         reason: str = "No reason provided.",
     ) -> None:
         """Kick a member."""
-
         await self.run_action(
             ctx,
             member,
@@ -507,12 +461,7 @@ class Moderation(commands.Cog):
         *,
         reason: str = "No reason provided.",
     ) -> None:
-        """
-        Softban a member.
-
-        Deletes recent messages, bans the user, then immediately
-        unbans them so they can rejoin.
-        """
+        """Softban a member and delete up to 24 hours of their messages."""
 
         async def execute() -> None:
             await member.ban(
@@ -551,24 +500,16 @@ class Moderation(commands.Cog):
         *,
         reason: str = "No reason provided.",
     ) -> None:
-        """
-        Timeout a member.
-
-        Duration examples:
-            10m
-            2h
-            7d
-        """
-
+        """Timeout a member. Duration examples: 10m, 2h, 7d."""
         await self.defer(ctx)
 
         timeout_duration = self.parse_duration(duration)
 
-        if timeout_duration is None:
+        if timeout_duration is None or timeout_duration <= timedelta(0):
             await self.error(
                 ctx,
                 "Invalid Duration",
-                "Use formats like `10m`, `2h`, or `7d`.",
+                "Use a positive duration such as `10m`, `2h`, or `7d`.",
             )
             return
 
@@ -609,7 +550,6 @@ class Moderation(commands.Cog):
         reason: str = "No reason provided.",
     ) -> None:
         """Remove a member's active timeout."""
-
         await self.run_action(
             ctx,
             member,
@@ -635,7 +575,6 @@ class Moderation(commands.Cog):
         reason: str = "No reason provided.",
     ) -> None:
         """Unban a user using their numeric Discord user ID."""
-
         await self.defer(ctx)
 
         if (
@@ -675,12 +614,7 @@ class Moderation(commands.Cog):
 
         try:
             user = await self.bot.fetch_user(int(user_id))
-
-            await ctx.guild.unban(
-                user,
-                reason=reason,
-            )
-
+            await ctx.guild.unban(user, reason=reason)
         except discord.NotFound:
             await self.error(
                 ctx,
@@ -688,7 +622,6 @@ class Moderation(commands.Cog):
                 "That user is not currently banned.",
             )
             return
-
         except discord.Forbidden:
             await self.error(
                 ctx,
@@ -696,7 +629,6 @@ class Moderation(commands.Cog):
                 "I don't have permission to unban that user.",
             )
             return
-
         except discord.HTTPException:
             await self.error(
                 ctx,
@@ -705,8 +637,15 @@ class Moderation(commands.Cog):
             )
             return
 
-        now = self.now()
+        await self.record_case(
+            guild_id=ctx.guild.id,
+            user_id=user.id,
+            moderator_id=ctx.author.id,
+            action="User Unbanned",
+            reason=reason,
+        )
 
+        now = self.now()
         await self.respond(
             ctx,
             "User Unbanned",
@@ -734,7 +673,6 @@ class Moderation(commands.Cog):
         amount: int,
     ) -> None:
         """Delete messages from the current text channel."""
-
         await self.defer(ctx)
 
         if (
@@ -783,7 +721,6 @@ class Moderation(commands.Cog):
         try:
             # Prefix commands include the command message itself.
             limit = amount + 1 if ctx.interaction is None else amount
-
             deleted = await ctx.channel.purge(limit=limit)
 
             count = len(deleted)
@@ -798,7 +735,6 @@ class Moderation(commands.Cog):
                 "I don't have permission to delete messages here.",
             )
             return
-
         except discord.HTTPException:
             await self.error(
                 ctx,
@@ -808,7 +744,6 @@ class Moderation(commands.Cog):
             return
 
         now = self.now()
-
         await self.respond(
             ctx,
             "Messages Deleted",
@@ -830,16 +765,7 @@ class Moderation(commands.Cog):
         self,
         message: discord.Message,
     ) -> None:
-        """
-        Remove blocked links.
-
-        Current filters:
-            - Discord invite links
-            - Configured adult website domains
-
-        Members with Manage Messages bypass the filter.
-        """
-
+        """Remove configured blocked links from member messages."""
         if (
             message.author.bot
             or message.guild is None
@@ -852,16 +778,13 @@ class Moderation(commands.Cog):
 
         if INVITE_RE.search(content):
             reason = "Discord invite links are not allowed."
-
         elif any(domain in content for domain in ADULT_DOMAINS):
             reason = "Adult website links are not allowed."
-
         else:
             return
 
         try:
             await message.delete()
-
         except (discord.Forbidden, discord.HTTPException):
             return
 
@@ -874,7 +797,6 @@ class Moderation(commands.Cog):
                 )
             )
 
-            # Filter warnings are temporary.
             await asyncio.sleep(DELETE_AFTER)
 
             try:
@@ -888,5 +810,4 @@ class Moderation(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     """Load the moderation cog."""
-
     await bot.add_cog(Moderation(bot))

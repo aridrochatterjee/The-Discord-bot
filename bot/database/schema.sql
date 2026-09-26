@@ -874,6 +874,41 @@ CREATE TABLE IF NOT EXISTS public.member_profiles (
 
 ALTER TABLE public.member_profiles ENABLE ROW LEVEL SECURITY;
 
+-- Staff-maintained profile notes, scoped to each server.
+CREATE TABLE IF NOT EXISTS member_profiles (
+    guild_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    bio TEXT NOT NULL DEFAULT '',
+    updated_by BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, user_id)
+);
+
+-- First time the bot observes a member in a server.
+-- This cannot reconstruct when someone joined before tracking began.
+CREATE TABLE IF NOT EXISTS member_first_seen (
+    guild_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, user_id)
+);
+
+-- Persistent moderation case history.
+CREATE TABLE IF NOT EXISTS moderation_cases (
+    id BIGSERIAL PRIMARY KEY,
+    guild_id BIGINT NOT NULL,
+    user_id BIGINT NOT NULL,
+    moderator_id BIGINT NOT NULL,
+    action TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT 'No reason provided.',
+    duration TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_moderation_cases_member
+ON moderation_cases (guild_id, user_id, created_at DESC);
+
 -- =============================================================================
 -- DONE
 -- =============================================================================
