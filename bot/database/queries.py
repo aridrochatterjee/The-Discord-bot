@@ -2802,6 +2802,248 @@ async def list_open_bounties(
 
     return res.data or []
 
+async def get_member_profile(
+    guild_id: int,
+    discord_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Fetch one member profile within a specific guild."""
+    supabase = get_supabase()
+    if supabase is None:
+        raise RuntimeError("Supabase is not initialized.")
+
+    response = await (
+        supabase.table("member_profiles")
+        .select(
+            "guild_id,discord_id,joined_date,bio,"
+            "created_by,updated_by,created_at,updated_at"
+        )
+        .eq("guild_id", str(guild_id))
+        .eq("discord_id", str(discord_id))
+        .limit(1)
+        .execute()
+    )
+
+    return response.data[0] if response.data else None
+
+
+async def upsert_member_profile(
+    guild_id: int,
+    discord_id: int,
+    joined_date: str,
+    bio: str,
+    staff_id: int,
+) -> None:
+    """Create or update a member profile."""
+    supabase = get_supabase()
+    if supabase is None:
+        raise RuntimeError("Supabase is not initialized.")
+
+    now = _utc_now_iso()
+
+    existing = await get_member_profile(guild_id, discord_id)
+
+    profile_data = {
+        "guild_id": str(guild_id),
+        "discord_id": str(discord_id),
+        "joined_date": joined_date,
+        "bio": bio,
+        "updated_by": str(staff_id),
+        "updated_at": now,
+    }
+
+    if existing is None:
+        profile_data["created_by"] = str(staff_id)
+        profile_data["created_at"] = now
+
+    await (
+        supabase.table("member_profiles")
+        .upsert(
+            profile_data,
+            on_conflict="guild_id,discord_id",
+        )
+        .execute()
+    )
+
+
+async def delete_member_profile(
+    guild_id: int,
+    discord_id: int,
+) -> bool:
+    """Delete a profile in the current guild. Return whether one existed."""
+    supabase = get_supabase()
+    if supabase is None:
+        raise RuntimeError("Supabase is not initialized.")
+
+    response = await (
+        supabase.table("member_profiles")
+        .delete()
+        .eq("guild_id", str(guild_id))
+        .eq("discord_id", str(discord_id))
+        .execute()
+    )
+
+    return bool(response.data)
+
+
+async def record_moderation_case(
+    guild_id: int,
+    user_id: int,
+    moderator_id: int,
+    action: str,
+    reason: str = "No reason provided.",
+    duration: Optional[str] = None,
+) -> bool:
+    """Save a successful moderation action to the case history."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("moderation_cases")
+            .insert({
+                "guild_id": guild_id,
+                "user_id": user_id,
+                "moderator_id": moderator_id,
+                "action": action,
+                "reason": reason,
+                "duration": duration,
+            })
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def get_moderation_cases(
+    guild_id: int,
+    user_id: int,
+    limit: int = 10,
+) -> List[Dict[str, Any]]:
+    """Fetch a member's most recent recorded moderation cases."""
+    supabase = get_supabase()
+    if not supabase:
+        return []
+
+    limit = max(1, min(limit, 50))
+
+    try:
+        result = await (
+            supabase.table("moderation_cases")
+            .select("*")
+            .eq("guild_id", guild_id)
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return result.data or []
+    except Exception:
+        return []
+
+
+async def get_member_profile(
+    guild_id: int,
+    user_id: int,
+) -> Optional[Dict[str, Any]]:
+    """Get staff-written profile notes for a member in a guild."""
+    supabase = get_supabase()
+    if not supabase:
+        return None
+
+    try:
+        result = await (
+            supabase.table("member_profiles")
+            .select("*")
+            .eq("guild_id", guild_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+        return result.data[0] if result.data else None
+    except Exception:
+        return None
+
+
+async def set_member_profile(
+    guild_id: int,
+    user_id: int,
+    bio: str,
+    updated_by: int,
+) -> bool:
+    """Create or update staff-written profile notes."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("member_profiles")
+            .upsert(
+                {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                    "bio": bio,
+                    "updated_by": updated_by,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="guild_id,user_id",
+            )
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def remove_member_profile(
+    guild_id: int,
+    user_id: int,
+) -> bool:
+    """Delete a member's staff-written profile notes."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("member_profiles")
+            .delete()
+            .eq("guild_id", guild_id)
+            .eq("user_id", user_id)
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
+
+
+async def record_member_first_seen(
+    guild_id: int,
+    user_id: int,
+) -> bool:
+    """Record first observation without overwriting the original timestamp."""
+    supabase = get_supabase()
+    if not supabase:
+        return False
+
+    try:
+        await (
+            supabase.table("member_first_seen")
+            .upsert(
+                {
+                    "guild_id": guild_id,
+                    "user_id": user_id,
+                },
+                on_conflict="guild_id,user_id",
+                ignore_duplicates=True,
+            )
+            .execute()
+        )
+        return True
+    except Exception:
+        return False
 
 
 

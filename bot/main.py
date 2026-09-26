@@ -65,6 +65,7 @@ class DiscordBot(commands.Bot):
         await self.load_extension("bot.cogs.challenge")
         await self.load_extension("bot.cogs.bounty")
         await self.load_extension("bot.cogs.help")
+        await self.load_extension("bot.cogs.member_profiles")
 
         # 🤖 OpenAI GPT Chatbot
         await self.load_extension("bot.cogs.gpt")
