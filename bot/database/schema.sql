@@ -858,6 +858,21 @@ ON bounties (
     created_at DESC
 );
 
+-- For the member_profiles table, which stores user profiles for each guild.
+
+CREATE TABLE IF NOT EXISTS public.member_profiles (
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    joined_date DATE,
+    bio TEXT NOT NULL DEFAULT '',
+    created_by TEXT NOT NULL,
+    updated_by TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (guild_id, discord_id)
+);
+
+ALTER TABLE public.member_profiles ENABLE ROW LEVEL SECURITY;
 
 -- =============================================================================
 -- DONE
